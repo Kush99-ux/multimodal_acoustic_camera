@@ -74,13 +74,16 @@ MIC_SPACING = None
 MODEL_PATH = "models/yolo11n-seg.pt"
 
 # Detection confidence threshold.
-CONFIDENCE_THRESHOLD = 0.40
+CONFIDENCE_THRESHOLD = 0.25
 
-# Intersection-over-Union threshold for segmentation.
+# Intersection-over-Union threshold.
 IOU_THRESHOLD = 0.45
 
 # Device selection: "cpu", "cuda", or "auto".
-YOLO_DEVICE = "auto"
+YOLO_DEVICE = "cpu"
+
+# Verbose inference output.
+YOLO_VERBOSE = False
 
 
 # ============================================================
