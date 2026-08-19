@@ -164,6 +164,30 @@ class AudioAcquisition:
     # Frame acquisition
     # ---------------------------------------------------------
 
+    def get_frame(self, timeout: float = 1.0) -> Optional[np.ndarray]:
+        """
+        Return one raw audio frame directly from the callback queue.
+
+        This method is intended for calibration and low-level processing where
+        the newest available audio block is required.
+
+        Parameters
+        ----------
+        timeout : float
+            Maximum time to wait for a frame in seconds.
+
+        Returns
+        -------
+        numpy.ndarray | None
+            Audio frame with shape (HOP_SIZE, NUM_CHANNELS), or None if no
+            frame is received within the timeout period.
+        """
+
+        try:
+            return self.audio_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
     def read(self) -> np.ndarray:
         """
         Return the latest sliding analysis window.
@@ -234,7 +258,7 @@ class AudioAcquisition:
 
         levels = self.channel_levels()
 
-        print("\nUMA-16 Channel Levels (dB)")
+        print("\\nUMA-16 Channel Levels (dB)")
         print("-" * 36)
 
         for row in range(4):
@@ -266,6 +290,7 @@ class AudioAcquisition:
         inactive = [i for i, level in enumerate(levels) if level < threshold_db]
 
         return inactive
+
     # ---------------------------------------------------------
     # Context manager support
     # ---------------------------------------------------------

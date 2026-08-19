@@ -49,6 +49,9 @@ BIT_DEPTH = 24
 # Speed of sound in air (m/s).
 SPEED_OF_SOUND = 343.0
 
+# Sliding analysis window
+FRAME_SIZE = 4096
+HOP_SIZE = 2048
 
 # ============================================================
 # Array Geometry Configuration
@@ -133,6 +136,32 @@ LOG_LEVEL = "INFO"
 SAVE_DEBUG_FRAMES = False
 SAVE_AUDIO_RECORDINGS = False
 
+
+# ============================================================
+# Acoustic Grid Configuration
+# ============================================================
+
+SPEED_OF_SOUND = 343.0
+
+# Localization plane (meters)
+GRID_Z = 1.0
+
+# Search area in front of the array (meters)
+GRID_X_MIN = -1.0
+GRID_X_MAX = 1.0
+GRID_Y_MIN = -1.0
+GRID_Y_MAX = 1.0
+
+# Spatial resolution
+GRID_INCREMENT = 0.02
+
+# ============================================================
+# Frequency Configuration
+# ============================================================
+
+FREQ_MIN = 300
+FREQ_MAX = 4000
+FREQ_STEP = 100
 
 # ============================================================
 # Future Deployment Configuration
