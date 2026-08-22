@@ -11,7 +11,7 @@ Responsibilities
 ----------------
 - Load the YOLO11 segmentation model.
 - Run inference on OpenCV BGR frames.
-- Convert YOLO results into project-level Detection objects.
+- Convert YOLO results into project-level VisionDetection objects.
 - Extract bounding boxes, centroids, masks, classes, and confidence.
 - Provide optional annotated frames for debugging.
 
@@ -22,13 +22,28 @@ This module does NOT:
 - Perform multimodal fusion.
 - Determine physical 3-D source position.
 
+Architecture
+------------
+ESP32-CAM
+    ↓
+CameraAcquisition
+    ↓
+CameraFrame
+    ↓
+YOLOSegmenter
+    ↓
+VisionDetection
+    ↓
+VisionFrame
+    ↓
+Synchronization / Fusion
+
 Author: Kush Sahu
 Project: Real-Time Multimodal Acoustic Camera
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Optional
 
 import cv2
@@ -44,69 +59,18 @@ from config.settings import (
     YOLO_VERBOSE,
 )
 
-
-# ============================================================
-# Detection Data Model
-# ============================================================
-
-
-@dataclass
-class Detection:
-    """
-    Project-level representation of a single YOLO detection.
-
-    Coordinates are expressed in camera-image pixel coordinates.
-
-    Attributes
-    ----------
-    class_id : int
-        Numeric YOLO class ID.
-
-    class_name : str
-        Human-readable class name.
-
-    confidence : float
-        YOLO confidence score.
-
-    bbox : tuple[float, float, float, float]
-        Bounding box in the form:
-        (x1, y1, x2, y2)
-
-    bbox_centroid : tuple[float, float]
-        Center of the bounding box:
-        (cx, cy)
-
-    mask_centroid : Optional[tuple[float, float]]
-        Centroid calculated from the segmentation mask.
-        None when a valid mask is unavailable.
-
-    mask : Optional[np.ndarray]
-        Binary segmentation mask at the original camera-frame
-        resolution.
-
-    """
-
-    class_id: int
-    class_name: str
-    confidence: float
-
-    bbox: tuple[float, float, float, float]
-
-    bbox_centroid: tuple[float, float]
-
-    mask_centroid: Optional[tuple[float, float]]
-
-    mask: Optional[np.ndarray]
-
-
-# ============================================================
-# YOLO Segmentation Engine
-# ============================================================
+from vision.models import VisionDetection
 
 
 class YOLOSegmenter:
     """
     Reusable YOLO11 instance segmentation engine.
+
+    The class isolates all Ultralytics-specific functionality inside
+    the vision subsystem.
+
+    Downstream modules should work with VisionDetection objects rather
+    than directly accessing Ultralytics Results objects.
 
     Example
     -------
@@ -119,7 +83,10 @@ class YOLOSegmenter:
         frame.shape,
     )
 
-    annotated = segmenter.annotate(frame, results)
+    annotated = segmenter.annotate(
+        frame,
+        results,
+    )
     """
 
     def __init__(
@@ -156,13 +123,14 @@ class YOLOSegmenter:
         self.confidence = confidence
         self.iou = iou
 
-        # ----------------------------------------------------
+        # ====================================================
         # Device selection
-        # ----------------------------------------------------
+        # ====================================================
 
-        requested_device = device.lower()
+        requested_device = device.lower().strip()
 
         if requested_device == "auto":
+
             self.device = (
                 "cuda"
                 if torch.cuda.is_available()
@@ -170,61 +138,97 @@ class YOLOSegmenter:
             )
 
         elif requested_device == "cuda":
+
             if not torch.cuda.is_available():
+
                 print(
                     "[YOLO] CUDA requested but unavailable. "
                     "Falling back to CPU."
                 )
+
                 self.device = "cpu"
+
             else:
                 self.device = "cuda"
 
+        elif requested_device == "cpu":
+
+            self.device = "cpu"
+
         else:
-            self.device = requested_device
 
-        print(f"[YOLO] Loading model: {self.model_path}")
-        print(f"[YOLO] Using device: {self.device}")
+            raise ValueError(
+                f"Unsupported YOLO device: '{device}'. "
+                "Use 'cpu', 'cuda', or 'auto'."
+            )
 
-        # ----------------------------------------------------
+        # ====================================================
         # Model loading
-        # ----------------------------------------------------
+        # ====================================================
+
+        print(
+            f"[YOLO] Loading model: {self.model_path}"
+        )
+
+        print(
+            f"[YOLO] Using device: {self.device}"
+        )
 
         self.model = YOLO(self.model_path)
 
-        print("[YOLO] Model loaded successfully.")
+        print(
+            "[YOLO] Model loaded successfully."
+        )
 
     # ========================================================
-    # Input Validation
+    # Input validation
     # ========================================================
 
     @staticmethod
-    def _validate_frame(frame: np.ndarray) -> None:
+    def _validate_frame(
+        frame: np.ndarray,
+    ) -> None:
         """
         Validate an OpenCV camera frame.
+
+        Expected format
+        ----------------
+        dtype  : uint8
+        shape  : (height, width, 3)
+        format : BGR
         """
 
         if frame is None:
+
             raise ValueError(
                 "Input frame is None."
             )
 
-        if not isinstance(frame, np.ndarray):
+        if not isinstance(
+            frame,
+            np.ndarray,
+        ):
+
             raise TypeError(
                 "Input frame must be a numpy.ndarray."
             )
 
         if frame.ndim != 3:
+
             raise ValueError(
                 "Input frame must have shape "
                 "(height, width, channels)."
             )
 
         if frame.shape[2] != 3:
+
             raise ValueError(
-                "Input frame must contain 3 channels."
+                "Input frame must contain exactly "
+                "3 color channels."
             )
 
         if frame.dtype != np.uint8:
+
             raise ValueError(
                 "Input frame must use dtype uint8."
             )
@@ -233,7 +237,10 @@ class YOLOSegmenter:
     # Inference
     # ========================================================
 
-    def segment(self, frame: np.ndarray):
+    def segment(
+        self,
+        frame: np.ndarray,
+    ) -> Optional[Any]:
         """
         Run YOLO11 instance segmentation on one camera frame.
 
@@ -244,8 +251,13 @@ class YOLOSegmenter:
 
         Returns
         -------
-        ultralytics.engine.results.Results
-            YOLO result object for the frame.
+        Results or None
+            Ultralytics Results object for the frame.
+
+        Notes
+        -----
+        This is the only method downstream code should need to call
+        before converting the result into VisionDetection objects.
         """
 
         self._validate_frame(frame)
@@ -264,7 +276,7 @@ class YOLOSegmenter:
         return results[0]
 
     # ========================================================
-    # Mask Processing
+    # Mask extraction
     # ========================================================
 
     @staticmethod
@@ -274,13 +286,30 @@ class YOLOSegmenter:
         frame_shape: tuple[int, ...],
     ) -> Optional[np.ndarray]:
         """
-        Extract one YOLO segmentation mask and resize it to
-        the original camera-frame resolution.
+        Extract one YOLO segmentation mask.
+
+        The mask is converted into a binary uint8 mask and resized
+        to the original camera-frame resolution.
+
+        Parameters
+        ----------
+        results :
+            Ultralytics Results object.
+
+        detection_index : int
+            Index of the detection.
+
+        frame_shape : tuple
+            Shape of the original OpenCV frame.
 
         Returns
         -------
         numpy.ndarray or None
-            Binary uint8 mask with shape (height, width).
+            Binary mask with shape:
+
+            (frame_height, frame_width)
+
+            Values are 0 or 1.
         """
 
         if results is None:
@@ -289,46 +318,96 @@ class YOLOSegmenter:
         if results.masks is None:
             return None
 
-        if detection_index >= len(results.masks.data):
+        if detection_index >= len(
+            results.masks.data
+        ):
             return None
 
-        frame_height = frame_shape[0]
-        frame_width = frame_shape[1]
+        frame_height = int(
+            frame_shape[0]
+        )
 
-        mask_tensor = results.masks.data[detection_index]
+        frame_width = int(
+            frame_shape[1]
+        )
 
-        mask = mask_tensor.detach().cpu().numpy()
+        mask_tensor = (
+            results
+            .masks
+            .data[detection_index]
+        )
 
-        # Convert model mask into binary mask.
-        mask = (mask > 0.5).astype(np.uint8)
+        mask = (
+            mask_tensor
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        # Convert probability mask to binary mask.
+        mask = (
+            mask > 0.5
+        ).astype(
+            np.uint8
+        )
 
         # Resize to original camera resolution.
         mask = cv2.resize(
             mask,
-            (frame_width, frame_height),
+            (
+                frame_width,
+                frame_height,
+            ),
             interpolation=cv2.INTER_NEAREST,
         )
 
         return mask
 
     # ========================================================
-    # Centroid Calculation
+    # Bounding-box centroid
     # ========================================================
 
     @staticmethod
     def _bbox_centroid(
-        bbox: tuple[float, float, float, float],
+        bbox: tuple[
+            float,
+            float,
+            float,
+            float,
+        ],
     ) -> tuple[float, float]:
         """
-        Calculate bounding-box centroid.
+        Calculate the bounding-box centroid.
+
+        Parameters
+        ----------
+        bbox :
+            (x1, y1, x2, y2)
+
+        Returns
+        -------
+        tuple[float, float]
+            (cx, cy)
         """
 
         x1, y1, x2, y2 = bbox
 
-        cx = (x1 + x2) / 2.0
-        cy = (y1 + y2) / 2.0
+        cx = (
+            x1 + x2
+        ) / 2.0
 
-        return cx, cy
+        cy = (
+            y1 + y2
+        ) / 2.0
+
+        return (
+            float(cx),
+            float(cy),
+        )
+
+    # ========================================================
+    # Segmentation-mask centroid
+    # ========================================================
 
     @staticmethod
     def _mask_centroid(
@@ -337,60 +416,135 @@ class YOLOSegmenter:
         """
         Calculate the centroid of a binary segmentation mask.
 
+        Parameters
+        ----------
+        mask : numpy.ndarray or None
+            Binary mask.
+
         Returns
         -------
-        tuple or None
+        tuple[float, float] or None
             (cx, cy) in image pixel coordinates.
         """
 
         if mask is None:
             return None
 
-        moments = cv2.moments(mask, binaryImage=True)
+        moments = cv2.moments(
+            mask,
+            binaryImage=True,
+        )
 
         if moments["m00"] <= 0:
+
             return None
 
-        cx = moments["m10"] / moments["m00"]
-        cy = moments["m01"] / moments["m00"]
+        cx = (
+            moments["m10"]
+            / moments["m00"]
+        )
 
-        return float(cx), float(cy)
+        cy = (
+            moments["m01"]
+            / moments["m00"]
+        )
+
+        return (
+            float(cx),
+            float(cy),
+        )
 
     # ========================================================
-    # Structured Detection Extraction
+    # Structured detection extraction
     # ========================================================
 
     def get_detections(
         self,
         results: Any,
-        frame_shape: tuple[int, ...],
-    ) -> list[Detection]:
+        frame_shape: tuple[int, ...] | None = None,
+    ) -> list[VisionDetection]:
         """
-        Convert YOLO results into project-level Detection objects.
+        Convert Ultralytics YOLO results into project-level
+        VisionDetection objects.
+
+        This method is the architectural boundary between YOLO
+        and the rest of the project.
 
         Parameters
         ----------
-        results
-            YOLO Results object returned by segment().
+        results :
+            Ultralytics Results object.
 
-        frame_shape
-            Shape of the original camera frame.
+        frame_shape : tuple or None
+            Shape of the original OpenCV camera frame.
+
+            Required when segmentation masks need to be resized
+            to the original frame resolution.
+
+            If omitted, the method attempts to use the shape
+            stored by Ultralytics in results.orig_shape.
 
         Returns
         -------
-        list[Detection]
-            Structured project-level detections.
+        list[VisionDetection]
+            Project-level detections.
+
+        Notes
+        -----
+        The returned objects contain no dependency on the
+        Ultralytics Results API.
         """
 
-        detections: list[Detection] = []
-
         if results is None:
-            return detections
+
+            return []
+
+        # ----------------------------------------------------
+        # Determine frame shape
+        # ----------------------------------------------------
+
+        if frame_shape is None:
+
+            original_shape = getattr(
+                results,
+                "orig_shape",
+                None,
+            )
+
+            if original_shape is not None:
+
+                frame_shape = (
+                    int(original_shape[0]),
+                    int(original_shape[1]),
+                )
+
+            else:
+
+                frame_shape = None
+
+        # ----------------------------------------------------
+        # No detections
+        # ----------------------------------------------------
 
         if results.boxes is None:
-            return detections
 
-        for index, box in enumerate(results.boxes):
+            return []
+
+        if len(results.boxes) == 0:
+
+            return []
+
+        detections: list[
+            VisionDetection
+        ] = []
+
+        # ====================================================
+        # Convert every YOLO detection
+        # ====================================================
+
+        for i, box in enumerate(
+            results.boxes
+        ):
 
             # ------------------------------------------------
             # Class
@@ -417,10 +571,8 @@ class YOLOSegmenter:
             # ------------------------------------------------
 
             x1, y1, x2, y2 = (
-                box.xyxy[0]
-                .detach()
-                .cpu()
-                .numpy()
+                box
+                .xyxy[0]
                 .tolist()
             )
 
@@ -435,68 +587,101 @@ class YOLOSegmenter:
             # Bounding-box centroid
             # ------------------------------------------------
 
-            bbox_centroid = self._bbox_centroid(
-                bbox
+            bbox_centroid = (
+                self._bbox_centroid(
+                    bbox
+                )
             )
 
             # ------------------------------------------------
             # Segmentation mask
             # ------------------------------------------------
 
-            mask = self._extract_mask(
-                results,
-                index,
-                frame_shape,
-            )
+            mask = None
+
+            mask_centroid = None
+
+            if frame_shape is not None:
+
+                mask = (
+                    self._extract_mask(
+                        results,
+                        i,
+                        frame_shape,
+                    )
+                )
+
+                mask_centroid = (
+                    self._mask_centroid(
+                        mask
+                    )
+                )
 
             # ------------------------------------------------
-            # Mask centroid
+            # Create project-level object
             # ------------------------------------------------
 
-            mask_centroid = self._mask_centroid(
-                mask
-            )
-
-            # ------------------------------------------------
-            # Detection object
-            # ------------------------------------------------
-
-            detection = Detection(
+            detection = VisionDetection(
                 class_id=class_id,
                 class_name=class_name,
                 confidence=confidence,
                 bbox=bbox,
                 bbox_centroid=bbox_centroid,
-                mask_centroid=mask_centroid,
                 mask=mask,
+                mask_centroid=mask_centroid,
             )
 
-            detections.append(detection)
+            detections.append(
+                detection
+            )
 
         return detections
 
     # ========================================================
-    # Convenience Method
+    # High-level detection interface
     # ========================================================
 
     def detect(
         self,
         frame: np.ndarray,
-    ) -> list[Detection]:
+    ) -> list[VisionDetection]:
         """
-        Run segmentation and directly return structured detections.
+        Run YOLO segmentation and directly return
+        project-level VisionDetection objects.
 
-        This is the primary high-level interface for future
-        vision and fusion modules.
+        This is the preferred high-level interface for
+        downstream modules.
+
+        Parameters
+        ----------
+        frame : numpy.ndarray
+            OpenCV BGR camera frame.
+
+        Returns
+        -------
+        list[VisionDetection]
+            Structured project-level detections.
 
         Example
         -------
         detections = segmenter.detect(frame)
+
+        for detection in detections:
+            print(
+                detection.class_name,
+                detection.confidence,
+                detection.bbox_centroid,
+            )
         """
 
-        results = self.segment(frame)
+        self._validate_frame(frame)
+
+        results = self.segment(
+            frame
+        )
 
         if results is None:
+
             return []
 
         return self.get_detections(
@@ -516,38 +701,67 @@ class YOLOSegmenter:
         """
         Generate an annotated visualization frame.
 
-        This function is intended only for debugging and
-        visualization.
+        This method is intended for debugging and visualization
+        only.
 
-        It does not modify the original frame.
+        Parameters
+        ----------
+        frame : numpy.ndarray
+            Original OpenCV BGR frame.
+
+        results :
+            Ultralytics Results object.
+
+        Returns
+        -------
+        numpy.ndarray
+            Annotated BGR frame.
+
+        Notes
+        -----
+        The original frame is never modified.
         """
 
-        self._validate_frame(frame)
+        self._validate_frame(
+            frame
+        )
 
         if results is None:
+
             return frame.copy()
 
-        return results.plot(
+        annotated = results.plot(
             img=frame.copy()
         )
 
+        return annotated
+
     # ========================================================
-    # Utility
+    # Model information
     # ========================================================
 
-    def class_names(self) -> dict[int, str]:
+    def class_names(
+        self,
+    ) -> dict[int, str]:
         """
         Return the class-name mapping used by the loaded model.
         """
 
-        return dict(self.model.names)
+        return dict(
+            self.model.names
+        )
+
+    # ========================================================
+    # Representation
+    # ========================================================
 
     def __repr__(self) -> str:
+
         return (
-            f"YOLOSegmenter("
+            "YOLOSegmenter("
             f"model='{self.model_path}', "
             f"device='{self.device}', "
             f"confidence={self.confidence}, "
             f"iou={self.iou}"
-            f")"
+            ")"
         )
