@@ -59,6 +59,7 @@ from config.settings import (
     FREQ_MIN,
     FREQ_MAX,
     FREQ_STEP,
+    FREQ_CENTERS,
     GRID_X_MIN,
     GRID_X_MAX,
     GRID_Y_MIN,
@@ -194,10 +195,8 @@ class SteeringFactory:
                 "FREQ_MAX must be >= FREQ_MIN."
             )
 
-        self.frequencies = np.arange(
-            FREQ_MIN,
-            FREQ_MAX + FREQ_STEP,
-            FREQ_STEP,
+        self.frequencies = np.array(
+            FREQ_CENTERS,
             dtype=np.float64,
         )
 

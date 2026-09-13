@@ -2,29 +2,29 @@
 fusion.visualization
 ====================
 
-Angular acoustic-to-camera visualization.
+Acoustic-to-camera visualization.
 
 Projection:
     MUSIC direction (azimuth, elevation)
              ↓
         camera FOV (centered at az=90, el=0)
              ↓
-          pixels
+           pixels
 
-This is angular projection only. It is NOT physical camera-acoustic
-calibration.
+This renders the REAL 2D MUSIC pseudo-spectrum heatmap overlaid on the camera
+feed along with the acoustic peak crosshair marker.
 
-IMPORTANT — mirroring
-----------------------
-The angle->pixel formula below is copied from the original
-uma_live_camera.py prototype, which explicitly mirrored the camera
-image (`cv2.flip(frame, 1)`) before drawing on it. The formula was
-tuned against that mirrored frame.
+Camera Orientation:
+The ESP32-CAM is outward-facing. By default, no horizontal mirror flip is applied
+(`mirror_camera=False`), maintaining 1:1 physical consistency between visual
+and acoustic azimuth:
+    - Physical Left:  azimuth < 90° -> image Left (u < width/2)
+    - Physical Right: azimuth > 90° -> image Right (u > width/2)
+    - Physical Above: elevation > 0° -> image Top (v < height/2)
+    - Physical Below: elevation < 0° -> image Bottom (v > height/2)
 
-The ESP32-CAM feed is NOT guaranteed to have the same physical
-orientation as the original webcam setup, so `mirror_camera` is
-exposed as a constructor flag rather than hard-coded. Use the
-Phase 10 hardware test to determine the correct value for your rig.
+Author: Kush Sahu
+Project: Real-Time Multimodal Acoustic Camera
 """
 
 from __future__ import annotations
@@ -32,34 +32,42 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from config.settings import (
+    CAMERA_FOV_H,
+    CAMERA_FOV_V,
+    MIRROR_CAMERA,
+    HEATMAP_ALPHA,
+)
 from fusion.models import MultimodalResult
 
 
 class AcousticHeatmapVisualizer:
+    """
+    Overlays the true 2D MUSIC acoustic heatmap and peak marker onto camera frames.
+    """
+
     def __init__(
         self,
-        heatmap_radius: int = 55,
-        alpha: float = 0.45,
-        horizontal_fov_deg: float = 50.0,
-        vertical_fov_deg: float = 37.5,
+        alpha: float = HEATMAP_ALPHA,
+        horizontal_fov_deg: float = CAMERA_FOV_H,
+        vertical_fov_deg: float = CAMERA_FOV_V,
         marker_size: int = 40,
-        mirror_camera: bool = True,   # matches original cv2.flip(frame, 1)
+        mirror_camera: bool = MIRROR_CAMERA,
+        colormap: int = cv2.COLORMAP_INFERNO,
         diagnostic: bool = False,
     ) -> None:
 
-        if heatmap_radius <= 0:
-            raise ValueError("heatmap_radius must be positive.")
         if not 0.0 <= alpha <= 1.0:
             raise ValueError("alpha must be between 0 and 1.")
         if horizontal_fov_deg <= 0 or vertical_fov_deg <= 0:
             raise ValueError("Camera FOV must be positive.")
 
-        self.heatmap_radius = int(heatmap_radius)
         self.alpha = float(alpha)
         self.horizontal_fov_deg = float(horizontal_fov_deg)
         self.vertical_fov_deg = float(vertical_fov_deg)
         self.marker_size = int(marker_size)
         self.mirror_camera = bool(mirror_camera)
+        self.colormap = int(colormap)
         self.diagnostic = bool(diagnostic)
 
         self.azimuth_center = 90.0
@@ -76,7 +84,15 @@ class AcousticHeatmapVisualizer:
         width: int,
         height: int,
     ) -> tuple[int, int]:
+        """
+        Convert angular direction (azimuth, elevation in degrees) to pixel coordinates.
 
+        Physical alignment (outward-facing camera, no mirror):
+          - Azimuth < 90° -> Left (x_norm < 0.5 -> u < width/2)
+          - Azimuth > 90° -> Right (x_norm > 0.5 -> u > width/2)
+          - Elevation > 0° -> Up (y_norm > 0.5 -> v < height/2)
+          - Elevation < 0° -> Down (y_norm < 0.5 -> v > height/2)
+        """
         az_min = self.azimuth_center - (self.horizontal_fov_deg / 2.0)
         az_max = self.azimuth_center + (self.horizontal_fov_deg / 2.0)
 
@@ -95,32 +111,6 @@ class AcousticHeatmapVisualizer:
         )
 
     # --------------------------------------------------------
-    # Smooth Gaussian heatmap
-    # --------------------------------------------------------
-
-    def create_heatmap(
-        self,
-        shape: tuple[int, int],
-        center: tuple[int, int],
-        intensity: float,
-    ) -> np.ndarray:
-
-        height, width = shape
-        u, v = center
-
-        scale = min(width, height) / 480.0
-        radius = max(45.0, self.heatmap_radius * scale)
-        sigma = radius / 2.0
-
-        yy, xx = np.mgrid[0:height, 0:width]
-
-        heatmap = np.exp(
-            -((xx - u) ** 2 + (yy - v) ** 2) / (2.0 * sigma * sigma)
-        ).astype(np.float32)
-
-        return heatmap * float(np.clip(intensity, 0.0, 1.0))
-
-    # --------------------------------------------------------
     # Render
     # --------------------------------------------------------
 
@@ -129,24 +119,18 @@ class AcousticHeatmapVisualizer:
         image: np.ndarray,
         result: MultimodalResult,
     ) -> np.ndarray:
-
+        """
+        Render the real 2-D MUSIC acoustic heatmap and peak crosshair onto the camera image.
+        """
         if image is None:
             raise ValueError("image cannot be None.")
-
         if image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("image must be BGR with shape (H, W, 3).")
 
-        # ------------------------------------------------
-        # Restore the original mirroring step.
-        #
-        # This MUST match the physical camera orientation.
-        # Toggle `mirror_camera` and re-run Phase 10 if the
-        # marker lands on the wrong side.
-        # ------------------------------------------------
+        # ESP32-CAM is outward-facing; keep unflipped unless explicitly requested.
         output = cv2.flip(image, 1) if self.mirror_camera else image.copy()
 
         localization = result.acoustic.localization
-
         if localization is None or not localization.valid:
             return output
 
@@ -154,9 +138,7 @@ class AcousticHeatmapVisualizer:
 
         azimuth = float(result.acoustic.metadata.get("azimuth_deg", 90.0))
         elevation = float(result.acoustic.metadata.get("elevation_deg", 0.0))
-
         center = self.angle_to_image(azimuth, elevation, width, height)
-
         confidence = float(np.clip(localization.confidence, 0.0, 1.0))
 
         if self.diagnostic:
@@ -171,29 +153,48 @@ class AcousticHeatmapVisualizer:
             print(f"pixel y   : {center[1]}")
             print(f"mirrored  : {self.mirror_camera}")
 
-        if confidence <= 0.0:
-            return output
+        # --- Overlay Real 2D MUSIC Heatmap ---
+        raw_heatmap = result.acoustic_heatmap
+        if raw_heatmap is None and "heatmap" in result.acoustic.metadata:
+            raw_heatmap = result.acoustic.metadata["heatmap"]
 
-        heatmap = self.create_heatmap((height, width), center, confidence)
+        if raw_heatmap is not None and np.any(raw_heatmap > 0):
+            # In the Acoular scanning grid:
+            #   row 0 is el_min (-18.75 deg, bottom)
+            #   row -1 is el_max (+18.75 deg, top)
+            # In OpenCV image space:
+            #   y = 0 is top
+            #   y = H-1 is bottom
+            # Therefore, vertically flip the heatmap so higher elevation maps to top of image:
+            heatmap_oriented = np.flipud(raw_heatmap)
 
-        heatmap_u8 = np.clip(heatmap * 255.0, 0, 255).astype(np.uint8)
-        colored = cv2.applyColorMap(heatmap_u8, cv2.COLORMAP_JET)
+            heatmap_u8 = (np.clip(heatmap_oriented, 0.0, 1.0) * 255.0).astype(np.uint8)
+            heatmap_resized = cv2.resize(
+                heatmap_u8,
+                (width, height),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            colored_heatmap = cv2.applyColorMap(heatmap_resized, self.colormap)
 
-        mask = heatmap[:, :, None] * self.alpha
+            # Blend with camera image
+            output = cv2.addWeighted(
+                output,
+                1.0 - self.alpha,
+                colored_heatmap,
+                self.alpha,
+                0.0,
+            )
 
-        output = (
-            output.astype(np.float32) * (1.0 - mask)
-            + colored.astype(np.float32) * mask
-        ).clip(0, 255).astype(np.uint8)
-
-        cv2.drawMarker(
-            output,
-            center,
-            (0, 0, 255),
-            cv2.MARKER_CROSS,
-            self.marker_size,
-            3,
-            cv2.LINE_AA,
-        )
+        # --- Draw Peak Direction Crosshair ---
+        if confidence > 0.0:
+            cv2.drawMarker(
+                output,
+                center,
+                (0, 0, 255),
+                cv2.MARKER_CROSS,
+                self.marker_size,
+                3,
+                cv2.LINE_AA,
+            )
 
         return output

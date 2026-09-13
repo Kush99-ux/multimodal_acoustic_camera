@@ -47,6 +47,13 @@ FRAME_HEIGHT = 240
 CAMERA_MODEL = "ESP32-CAM AI Thinker"
 CAMERA_SENSOR = "OV2640"
 
+# Camera field of view (degrees)
+CAMERA_FOV_H = 50.0
+CAMERA_FOV_V = 37.5
+
+# ESP32-CAM is outward-facing. Do not mirror/flip the image.
+MIRROR_CAMERA = False
+
 
 # ============================================================
 # AUDIO CONFIGURATION
@@ -134,7 +141,7 @@ ARRAY_HEIGHT = 0.132
 # Keep this value here as centralized configuration as well,
 # but geometry.py remains the authoritative coordinate generator
 # until the geometry architecture is refactored.
-MIC_SPACING = 0.0235
+MIC_SPACING = 0.042
 
 
 # ============================================================
@@ -165,21 +172,28 @@ NUM_SOURCES = 1
 # Higher values respond faster.
 # Lower values provide more temporal smoothing.
 MUSIC_SMOOTHING = 0.3
+CSM_ALPHA = 0.3
+
+# Minimum dB level before MUSIC is run (matching original NOISE_THRESHOLD_DB = 15).
+NOISE_THRESHOLD_DB = 15.0
+
+# Sigmoid sharpness for heatmap contrast (matching original ATTENUATION_POWER = 3.0).
+ATTENUATION_POWER = 3.0
+SIGMOID_GAIN = 3.0
+SIGMOID_MIDPOINT = 0.5
 
 # ------------------------------------------------------------
-# Acoustic frequency range
+# Acoustic frequency range (matching original 500-3000 Hz)
 # ------------------------------------------------------------
 
-# Frequency range used by the steering/MUSIC pipeline.
-#
-# The current SteeringFactory uses these values to generate:
-#
-#     300, 400, 500, ..., 4000 Hz
-#
-# resulting in 38 frequency bins.
-FREQ_MIN = 300
-FREQ_MAX = 4000
-FREQ_STEP = 100
+FREQ_MIN = 500
+FREQ_MAX = 3000
+BAND_WIDTH = 500
+FREQ_STEP = 500
+
+# The exact 6 sub-band center frequencies from the golden reference:
+# 500, 1000, 1500, 2000, 2500, 3000 Hz
+FREQ_CENTERS = (500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0)
 
 # These aliases describe the same frequency range at the
 # higher-level configuration layer.
