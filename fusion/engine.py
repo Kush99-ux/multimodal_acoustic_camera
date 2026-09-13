@@ -2,14 +2,16 @@
 fusion.engine
 =============
 
-First multimodal fusion engine for the
+Multimodal fusion engine for the
 Real-Time Multimodal Acoustic Camera.
 
-Milestone 17
+Milestone 21
 ------------
 
-This module establishes the first complete software-level
-fusion pipeline:
+This module performs temporal/data-level fusion and prepares the
+acoustic spatial information required by the visual heatmap stage.
+
+Pipeline:
 
     VisionFrame
           +
@@ -23,24 +25,22 @@ fusion pipeline:
           |
           v
     MultimodalResult
+          |
+          v
+    Acoustic spatial visualization
 
-This first implementation intentionally performs only
-temporal and data-level fusion.
+The engine still does NOT perform camera-acoustic spatial calibration.
+It only preserves acoustic localization/spatial information so that
+the visualization layer can use it.
 
-It does NOT yet perform:
+It does NOT perform:
 
-- object-to-sound association
-- spatial projection
-- acoustic coordinate correction
 - camera calibration
+- coordinate transformation
+- object-to-sound association
 - acoustic/visual triangulation
 - source classification
-- advanced confidence estimation
-
-The acoustic localization is treated as an input measurement.
-This allows the overall multimodal software architecture to
-develop independently of the current acoustic localization
-accuracy.
+- scientifically validated confidence estimation
 
 Author: Kush Sahu
 Project: Real-Time Multimodal Acoustic Camera
@@ -62,7 +62,13 @@ from fusion.synchronization import (
 
 class FusionEngine:
     """
-    First-generation multimodal fusion engine.
+    Multimodal fusion engine.
+
+    The engine synchronizes a VisionFrame and an AcousticFrame
+    and packages the result into a MultimodalResult.
+
+    Acoustic spatial information already produced by the MUSIC
+    stage is preserved through the result metadata.
 
     Parameters
     ----------
@@ -70,10 +76,6 @@ class FusionEngine:
         Synchronization component used to determine whether
         vision and acoustic frames belong to the same time
         window.
-
-    Notes
-    -----
-    The engine does not modify either input frame.
     """
 
     def __init__(
@@ -104,21 +106,14 @@ class FusionEngine:
         """
         Attempt to fuse one VisionFrame and one AcousticFrame.
 
-        Parameters
-        ----------
-        vision : VisionFrame
-            Vision data produced by the vision pipeline.
-
-        acoustic : AcousticFrame
-            Acoustic data produced by the acoustic pipeline.
+        The timestamps must fall within the configured
+        synchronization tolerance.
 
         Returns
         -------
         MultimodalResult or None
-            A synchronized multimodal result if the timestamps
-            are within the configured tolerance.
-
-            Returns None when the frames cannot be synchronized.
+            Synchronized multimodal result, or None when the
+            frames cannot be synchronized.
         """
 
         self.processed_count += 1
@@ -141,7 +136,7 @@ class FusionEngine:
             return None
 
         # ----------------------------------------------------
-        # Calculate initial fusion confidence
+        # Calculate fusion confidence
         # ----------------------------------------------------
 
         fusion_confidence = (
@@ -149,6 +144,18 @@ class FusionEngine:
                 synchronized_pair.timestamp_difference_ms,
                 acoustic,
             )
+        )
+
+        # ----------------------------------------------------
+        # Prepare fusion metadata
+        # ----------------------------------------------------
+
+        metadata = self._build_fusion_metadata(
+            acoustic=acoustic,
+            vision=vision,
+            timestamp_difference_ms=(
+                synchronized_pair.timestamp_difference_ms
+            ),
         )
 
         # ----------------------------------------------------
@@ -165,11 +172,79 @@ class FusionEngine:
             synchronized=True,
             fusion_confidence=fusion_confidence,
             status="synchronized",
+            metadata=metadata,
         )
 
         self.successful_fusions += 1
 
         return result
+
+    # ========================================================
+    # Fusion metadata
+    # ========================================================
+
+    @staticmethod
+    def _build_fusion_metadata(
+        acoustic: AcousticFrame,
+        vision: VisionFrame,
+        timestamp_difference_ms: float,
+    ) -> dict:
+        """
+        Build metadata required by downstream visualization.
+
+        This method deliberately does not transform acoustic
+        coordinates into camera coordinates.
+
+        The acoustic localization remains in the acoustic array's
+        coordinate system until calibration is implemented.
+        """
+
+        metadata = {
+            "fusion_stage": "temporal",
+            "spatial_projection_available": False,
+            "camera_acoustic_calibrated": False,
+            "timestamp_difference_ms": (
+                float(timestamp_difference_ms)
+            ),
+            "vision_resolution": (
+                int(vision.width),
+                int(vision.height),
+            ),
+        }
+
+        # ----------------------------------------------------
+        # Acoustic localization
+        # ----------------------------------------------------
+
+        if acoustic.localization is not None:
+
+            localization = acoustic.localization
+
+            metadata["acoustic_localization"] = {
+                "x": float(localization.x),
+                "y": float(localization.y),
+                "z": float(localization.z),
+                "response": float(localization.response),
+                "confidence": float(localization.confidence),
+            }
+
+        else:
+
+            metadata["acoustic_localization"] = None
+
+        # ----------------------------------------------------
+        # Preserve MUSIC metadata if present
+        # ----------------------------------------------------
+
+        if acoustic.metadata:
+
+            metadata["music"] = dict(acoustic.metadata)
+
+        else:
+
+            metadata["music"] = {}
+
+        return metadata
 
     # ========================================================
     # Confidence
@@ -183,29 +258,17 @@ class FusionEngine:
         """
         Calculate an initial system-level fusion confidence.
 
-        This is intentionally conservative.
+        Temporal alignment and acoustic confidence are combined
+        multiplicatively.
 
-        Temporal alignment contributes to the confidence,
-        while acoustic confidence contributes as the second
-        component.
-
-        This value is NOT a scientifically validated
-        source-association confidence.
-
-        Returns
-        -------
-        float
-            Value between 0.0 and 1.0.
+        This is NOT a scientifically validated confidence metric.
         """
+
+        tolerance = self.synchronizer.get_tolerance_ms()
 
         # ----------------------------------------------------
         # Temporal confidence
-        #
-        # 0 ms difference  -> 1.0
-        # tolerance        -> 0.0
         # ----------------------------------------------------
-
-        tolerance = self.synchronizer.get_tolerance_ms()
 
         if tolerance <= 0.0:
 
@@ -235,7 +298,7 @@ class FusionEngine:
             )
 
         # ----------------------------------------------------
-        # Combine conservatively
+        # Combine
         # ----------------------------------------------------
 
         confidence = (

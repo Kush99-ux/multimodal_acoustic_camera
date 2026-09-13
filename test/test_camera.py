@@ -22,7 +22,7 @@ No fusion.
 
 import cv2
 
-from camera import CameraAcquisition
+from vision.camera import CameraAcquisition
 
 
 def main() -> None:

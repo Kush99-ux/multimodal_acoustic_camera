@@ -260,6 +260,21 @@ SYNC_TOLERANCE_MS = 100
 
 
 # ============================================================
+# MULTIMODAL PIPELINE
+# ============================================================
+
+# Maximum number of localized acoustic frames retained while waiting
+# for a matching vision frame. The M20 orchestration layer keeps this
+# bounded so live operation cannot accumulate historical audio results.
+MULTIMODAL_ACOUSTIC_BUFFER_SIZE = 16
+
+# Upper bound for a single live-loop wait for an audio analysis frame.
+# A finite timeout keeps the pipeline responsive when no audio frame is
+# currently available.
+MULTIMODAL_AUDIO_READ_TIMEOUT_SECONDS = 0.05
+
+
+# ============================================================
 # VISUALIZATION CONFIGURATION
 # ============================================================
 

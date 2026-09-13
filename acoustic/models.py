@@ -32,7 +32,7 @@ Project: Real-Time Multimodal Acoustic Camera
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import math
 
@@ -243,6 +243,8 @@ class AcousticFrame:
     frame_size: Optional[int] = None
 
     processing_time: Optional[float] = None
+
+    heatmap: Optional[Any] = None
 
     # --------------------------------------------------------
     # Optional metadata

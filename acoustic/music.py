@@ -1,58 +1,46 @@
 """
 acoustic.music
 ==============
+Real-time MUSIC localization for the miniDSP UMA-16.
 
-MUSIC (Multiple Signal Classification) localization engine for the
-miniDSP UMA-16 v2 microphone array.
-
-This module provides:
-
-1. Real-time MUSIC localization.
-2. FFT-based frequency analysis.
-3. Cross-Spectral Matrix (CSM) estimation.
-4. Noise-subspace MUSIC spectrum calculation.
-5. Normalized acoustic localization heatmaps.
-6. Numerical extraction of the strongest estimated acoustic source.
-
-The localization result is expressed in the same physical coordinate
-system used by the SteeringFactory.
-
-Author: Kush Sahu
-Project: Real-Time Multimodal Acoustic Camera
+The microphone geometry and frequency-dependent steering matrices
+come from SteeringFactory. MUSIC itself only handles audio analysis,
+CSM estimation, spatial spectrum calculation and peak extraction.
 """
 
 from __future__ import annotations
 
+import time
 import numpy as np
 
+from acoustic.audio import AudioFrame
+from acoustic.models import AcousticFrame, AcousticLocalization
 from acoustic.steering import SteeringFactory
+
 from config.settings import (
     SAMPLE_RATE,
     FRAME_SIZE,
     MUSIC_SMOOTHING,
     NUM_SOURCES,
-    GRID_Z,
-    GRID_X_MIN,
-    GRID_X_MAX,
-    GRID_Y_MIN,
-    GRID_Y_MAX,
-    GRID_INCREMENT,
 )
+
+# ============================================================
+# STAGE C — ORIGINAL-STYLE FREQUENCY BANDS
+# ============================================================
+ANALYSIS_BANDS = (
+    (500.0, 1000.0),
+    (1000.0, 1500.0),
+    (1500.0, 2000.0),
+    (2000.0, 2500.0),
+    (2500.0, 3000.0),
+)
+EMA_ALPHA = 0.35
+SIGMOID_GAIN = 10.0
+SIGMOID_MIDPOINT = 0.5
 
 
 class MusicLocalizer:
-    """
-    Real-time MUSIC localization engine.
-
-    The localizer receives a multichannel audio frame from the UMA-16,
-    computes the frequency-domain representation, estimates the
-    cross-spectral matrices, evaluates the MUSIC pseudospectrum over
-    the configured spatial grid, and returns a normalized localization
-    heatmap.
-
-    The strongest point in the heatmap can then be converted into a
-    physical (x, y, z) coordinate using :meth:`get_peak_position`.
-    """
+    """Frequency-domain MUSIC localizer for the UMA-16."""
 
     def __init__(
         self,
@@ -62,390 +50,266 @@ class MusicLocalizer:
         n_sources: int = NUM_SOURCES,
     ) -> None:
 
-        self.sample_rate = sample_rate
-        self.frame_size = frame_size
-        self.smoothing = smoothing
-        self.n_sources = n_sources
+        self.sample_rate = int(sample_rate)
+        self.frame_size = int(frame_size)
+        self.smoothing = float(smoothing)
+        self.n_sources = int(n_sources)
 
-        # -----------------------------------------------------
-        # Steering / geometry subsystem
-        # -----------------------------------------------------
+        if self.sample_rate <= 0:
+            raise ValueError("sample_rate must be positive.")
+        if self.frame_size <= 0:
+            raise ValueError("frame_size must be positive.")
+        if not 0.0 <= self.smoothing <= 1.0:
+            raise ValueError("smoothing must be between 0 and 1.")
+        if self.n_sources < 0:
+            raise ValueError("n_sources cannot be negative.")
 
-        self.factory = SteeringFactory()
+        # SteeringFactory owns the ORIGINAL UMA-16 geometry.
+        self.steering_factory = SteeringFactory()
+        self.steering_factory.precompute_matrices()
 
-        # Precompute all configured steering matrices once during
-        # initialization rather than repeatedly during localization.
-        self.factory.precompute_matrices()
+        self.grid_shape = tuple(self.steering_factory.grid_shape())
+        self.az_values = self.steering_factory.get_azimuth_values()
+        self.el_values = self.steering_factory.get_elevation_values()
 
-        self.frequencies = self.factory.get_frequencies()
-        self.grid_shape = self.factory.grid_shape()
+        geometry = self.steering_factory.get_microphone_geometry()
+        self.num_mics = int(geometry.pos_total.shape[1])
 
-        # -----------------------------------------------------
-        # Temporal CSM state
-        # -----------------------------------------------------
+        if self.num_mics <= 0:
+            raise ValueError("Microphone geometry contains no microphones.")
 
-        self.previous_csm: np.ndarray | None = None
+        self.analysis_bands = ANALYSIS_BANDS
+        self.ema_alpha = EMA_ALPHA
+        self._smoothed_csms: dict[int, np.ndarray] = {}
+        self._band_bins = []
+        
+        freq_resolution = self.sample_rate / self.frame_size
+        for low, high in self.analysis_bands:
+            bins = np.where(
+                (np.fft.rfftfreq(self.frame_size, 1.0 / self.sample_rate) >= low)
+                & (np.fft.rfftfreq(self.frame_size, 1.0 / self.sample_rate) < high)
+            )[0]
+            self._band_bins.append(bins)
+            
+        print(f"[MUSIC] Frequency bands: {len(self.analysis_bands)}")
+        print(f"[MUSIC] Initialized with {self.num_mics} microphones")
+        print(f"[MUSIC] Frame size: {self.frame_size} samples")
+        print(f"[MUSIC] Sample rate: {self.sample_rate} Hz")
 
-        # FFT frequency bins corresponding to the configured
-        # analysis frame.
-        self.fft_frequencies = np.fft.rfftfreq(
-            self.frame_size,
-            1.0 / self.sample_rate,
-        )
+    # ------------------------------------------------------------------
+    # Frequency / CSM
+    # ------------------------------------------------------------------
 
-    # =========================================================
-    # Frequency utilities
-    # =========================================================
-
-    def _nearest_fft_bin(self, frequency: float) -> int:
-        """
-        Find the FFT bin closest to a requested frequency.
-
-        Parameters
-        ----------
-        frequency : float
-            Requested frequency in Hz.
-
-        Returns
-        -------
-        int
-            Index of the closest FFT bin.
-        """
-
-        return int(
-            np.argmin(
-                np.abs(self.fft_frequencies - frequency)
-            )
-        )
-
-    # =========================================================
-    # Cross-Spectral Matrix
-    # =========================================================
-
-    def _compute_csm(
+    def _compute_band_csm(
         self,
-        fft_frame: np.ndarray,
-        bin_index: int,
+        spectrum: np.ndarray,
+        bins: np.ndarray,
     ) -> np.ndarray:
         """
-        Compute and temporally smooth the Cross-Spectral Matrix.
-
-        Parameters
-        ----------
-        fft_frame : numpy.ndarray
-            Frequency-domain multichannel audio frame.
-
-        bin_index : int
-            FFT bin to use.
-
-        Returns
-        -------
-        numpy.ndarray
-            Complex CSM with shape:
-
-                (NUM_CHANNELS, NUM_CHANNELS)
+        Compute the spatial CSM by averaging FFT-bin outer products
+        inside one frequency band.
         """
+        if spectrum.ndim != 2:
+            raise ValueError("spectrum must have shape (channels, frequencies).")
 
-        # Extract the complex spectrum of all microphones at the
-        # selected frequency bin.
-        x = fft_frame[bin_index]
-
-        # Spatial covariance / Cross-Spectral Matrix.
-        csm = np.outer(
-            x,
-            np.conjugate(x),
-        )
-
-        # First frame initializes the temporal state.
-        if self.previous_csm is None:
-            self.previous_csm = csm
-
-        # Subsequent frames use exponential smoothing.
-        else:
-            self.previous_csm = (
-                self.smoothing * csm
-                + (1.0 - self.smoothing) * self.previous_csm
+        if spectrum.shape[0] != self.num_mics:
+            raise ValueError(
+                f"Expected {self.num_mics} channels, "
+                f"received {spectrum.shape[0]}."
             )
 
-        return self.previous_csm
+        if bins.size == 0:
+            return np.zeros(
+                (self.num_mics, self.num_mics),
+                dtype=np.complex128,
+            )
 
-    # =========================================================
-    # MUSIC spectrum
-    # =========================================================
+        X = spectrum[:, bins]
 
-    def _music_spectrum(
+        csm = (X @ X.conj().T) / float(X.shape[1])
+
+        csm = 0.5 * (csm + csm.conj().T)
+
+        return csm
+
+    def _smooth_csm(
+        self,
+        band_index: int,
+        csm: np.ndarray,
+    ) -> np.ndarray:
+
+        previous = self._smoothed_csms.get(band_index)
+
+        if previous is None:
+            smoothed = csm.copy()
+        else:
+            smoothed = (
+                self.ema_alpha * csm
+                + (1.0 - self.ema_alpha) * previous
+            )
+
+        self._smoothed_csms[band_index] = smoothed
+
+        return smoothed
+
+    # ------------------------------------------------------------------
+    # MUSIC
+    # ------------------------------------------------------------------
+
+    def _music_band_spectrum(
         self,
         csm: np.ndarray,
-        steering_matrix: np.ndarray,
-        n_sources: int | None = None,
+        steering: np.ndarray,
     ) -> np.ndarray:
-        """
-        Calculate the MUSIC pseudospectrum.
 
-        Parameters
-        ----------
-        csm : numpy.ndarray
-            Cross-Spectral Matrix.
-
-        steering_matrix : numpy.ndarray
-            Steering matrix with shape:
-
-                (grid_points, microphones)
-
-        n_sources : int, optional
-            Number of dominant acoustic sources.
-
-            If omitted, the configured NUM_SOURCES value is used.
-
-        Returns
-        -------
-        numpy.ndarray
-            MUSIC spectrum for every spatial grid point.
-        """
-
-        if n_sources is None:
-            n_sources = self.n_sources
-
-        # -----------------------------------------------------
-        # Eigenvalue decomposition
-        # -----------------------------------------------------
+        csm = csm + 1e-10 * np.eye(self.num_mics)
 
         eigenvalues, eigenvectors = np.linalg.eigh(csm)
 
-        # Sort eigenvectors according to descending eigenvalue.
         order = np.argsort(eigenvalues)[::-1]
 
         eigenvectors = eigenvectors[:, order]
 
-        # -----------------------------------------------------
-        # Noise subspace
-        # -----------------------------------------------------
+        # Single dominant acoustic source.
+        noise_subspace = eigenvectors[:, 1:]
 
-        # The strongest n_sources eigenvectors represent the signal
-        # subspace. The remaining eigenvectors form the noise
-        # subspace.
-        noise_subspace = eigenvectors[:, n_sources:]
-
-        # Projection matrix onto the noise subspace.
-        projection = (
-            noise_subspace
-            @ noise_subspace.conj().T
+        projection = np.einsum(
+            "mf,mk->fk",
+            steering.conj(),
+            noise_subspace,
         )
 
-        # -----------------------------------------------------
-        # MUSIC denominator
-        # -----------------------------------------------------
-
-        denominator = np.real(
-            np.einsum(
-                "ij,jk,ik->i",
-                steering_matrix.conj(),
-                projection,
-                steering_matrix,
-            )
+        denominator = np.sum(
+            np.abs(projection) ** 2,
+            axis=1,
         )
 
-        # Prevent numerical division by zero.
         denominator = np.maximum(
             denominator,
             1e-12,
         )
 
-        # MUSIC pseudospectrum.
         return 1.0 / denominator
 
-    # =========================================================
+    # ------------------------------------------------------------------
     # Localization
-    # =========================================================
+    # ------------------------------------------------------------------
 
-    def localize(
-        self,
-        frame: np.ndarray,
-    ) -> np.ndarray:
+    def localize(self, frame: np.ndarray) -> np.ndarray:
         """
-        Compute a normalized MUSIC localization heatmap.
+        Compute the normalized MUSIC heatmap.
 
-        Parameters
-        ----------
-        frame : numpy.ndarray
-            Audio frame with shape:
+        Input shape:
+            (FRAME_SIZE, 16)
 
-                (FRAME_SIZE, NUM_CHANNELS)
-
-        Returns
-        -------
-        numpy.ndarray
-            Normalized MUSIC heatmap with shape:
-
-                (grid_y, grid_x)
-
-            Values are normalized to the range:
-
-                0.0 → 1.0
+        Output shape:
+            (grid_y, grid_x)
         """
-
-        # -----------------------------------------------------
-        # Validate input
-        # -----------------------------------------------------
-
-        if frame.ndim != 2:
+        window = np.hanning(self.frame_size)
+        
+        data = np.asarray(frame, dtype=np.float64)
+        
+        if data.ndim == 1:
+            data = data[:, None]
+            
+        if data.shape[0] != self.frame_size:
             raise ValueError(
-                "Audio frame must be 2-dimensional."
+                f"Expected {self.frame_size} samples, "
+                f"received {data.shape[0]}."
             )
-
-        if frame.shape[0] != self.frame_size:
+            
+        if data.shape[1] != self.num_mics:
             raise ValueError(
-                f"Expected {self.frame_size} samples per frame, "
-                f"received {frame.shape[0]}."
+                f"Expected {self.num_mics} microphones, "
+                f"received {data.shape[1]}."
             )
-
-        expected_channels = (
-            self.factory.get_microphone_geometry().pos_total.shape[1]
-        )
-
-        if frame.shape[1] != expected_channels:
-            raise ValueError(
-                f"Expected {expected_channels} audio channels, "
-                f"received {frame.shape[1]}."
-            )
-
-        # -----------------------------------------------------
-        # FFT
-        # -----------------------------------------------------
-
-        fft_frame = np.fft.rfft(
-            frame,
+            
+        windowed = data * window[:, None]
+        
+        fft_data = np.fft.rfft(
+            windowed,
             axis=0,
         )
+        
+        spectrum = fft_data.T
+        band_spectra = []
+        
+        for band_index, bins in enumerate(self._band_bins):
 
-        # -----------------------------------------------------
-        # MUSIC spectrum accumulator
-        # -----------------------------------------------------
-
-        number_of_grid_points = (
-            self.grid_shape[0]
-            * self.grid_shape[1]
-        )
-
-        spectrum = np.zeros(
-            number_of_grid_points,
-            dtype=np.float64,
-        )
-
-        count = 0
-
-        # -----------------------------------------------------
-        # Evaluate configured frequencies
-        # -----------------------------------------------------
-
-        for frequency in self.frequencies:
-
-            frequency = float(frequency)
-
-            # Find closest FFT bin.
-            bin_index = self._nearest_fft_bin(
-                frequency
+            csm = self._compute_band_csm(
+                spectrum,
+                bins,
             )
 
-            # Estimate CSM.
-            csm = self._compute_csm(
-                fft_frame,
-                bin_index,
-            )
-
-            # Retrieve precomputed steering matrix.
-            steering_matrix = self.factory.get_matrix(
-                frequency
-            )
-
-            # Calculate MUSIC pseudospectrum.
-            spectrum += self._music_spectrum(
+            csm = self._smooth_csm(
+                band_index,
                 csm,
-                steering_matrix,
             )
 
-            count += 1
+            steering = self.steering_factory.get_band_steering(
+                self.analysis_bands[band_index][0],
+                self.analysis_bands[band_index][1],
+            )
 
-        # -----------------------------------------------------
-        # Frequency averaging
-        # -----------------------------------------------------
+            band_spectrum = self._music_band_spectrum(
+                csm,
+                steering,
+            )
 
-        if count > 0:
-            spectrum /= count
-
-        # -----------------------------------------------------
-        # Convert to 2D grid
-        # -----------------------------------------------------
-
-        heatmap = spectrum.reshape(
-            self.grid_shape
+            band_spectra.append(band_spectrum)
+            
+        if not band_spectra:
+            raise RuntimeError("No valid MUSIC frequency bands.")
+            
+        spectrum = np.mean(
+            np.stack(band_spectra, axis=0),
+            axis=0,
         )
+        
+        spectrum -= np.min(spectrum)
+        peak_value = np.max(spectrum)
+        if peak_value > 0:
+            spectrum /= peak_value
+            
+        # Sigmoid contrast enhancement.
+        spectrum = 1.0 / (
+            1.0
+            + np.exp(
+                -SIGMOID_GAIN
+                * (spectrum - SIGMOID_MIDPOINT)
+            )
+        )
+        
+        spectrum -= np.min(spectrum)
+        peak_value = np.max(spectrum)
+        if peak_value > 0:
+            spectrum /= peak_value
 
-        # -----------------------------------------------------
-        # Normalize
-        # -----------------------------------------------------
-
-        heatmap -= heatmap.min()
-
-        maximum = heatmap.max()
-
-        if maximum > 0:
-            heatmap /= maximum
+        # Shape back into 2D heatmap format.
+        heatmap = spectrum.reshape(self.grid_shape)
+        heatmap = np.nan_to_num(
+            heatmap,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
 
         return heatmap
 
-    # =========================================================
-    # Peak extraction
-    # =========================================================
+    # ------------------------------------------------------------------
+    # Peak
+    # ------------------------------------------------------------------
 
     def get_peak_position(
         self,
         heatmap: np.ndarray,
     ) -> dict[str, float | int]:
-        """
-        Extract the strongest MUSIC localization point.
+        """Return the strongest MUSIC position in angular coordinates."""
 
-        This method converts the maximum value in the MUSIC heatmap
-        into physical x, y, and z coordinates using the same grid
-        configuration used by SteeringFactory.
-
-        Parameters
-        ----------
-        heatmap : numpy.ndarray
-            MUSIC heatmap returned by :meth:`localize`.
-
-        Returns
-        -------
-        dict
-            Dictionary containing:
-
-            x
-                Estimated source x-coordinate in metres.
-
-            y
-                Estimated source y-coordinate in metres.
-
-            z
-                Localization-plane z-coordinate in metres.
-
-            value
-                Normalized MUSIC response at the peak.
-
-            row
-                Heatmap row containing the peak.
-
-            column
-                Heatmap column containing the peak.
-        """
-
-        # -----------------------------------------------------
-        # Validate heatmap
-        # -----------------------------------------------------
+        heatmap = np.asarray(heatmap)
 
         if heatmap.ndim != 2:
-            raise ValueError(
-                "Heatmap must be a 2-dimensional array."
-            )
+            raise ValueError("Heatmap must be 2-dimensional.")
 
         if heatmap.shape != self.grid_shape:
             raise ValueError(
@@ -453,90 +317,112 @@ class MusicLocalizer:
                 f"received {heatmap.shape}."
             )
 
-        # -----------------------------------------------------
-        # Find maximum response
-        # -----------------------------------------------------
-
-        peak_index = int(
-            np.argmax(heatmap)
-        )
-
-        peak_row, peak_column = np.unravel_index(
+        peak_index = int(np.argmax(heatmap))
+        row, column = np.unravel_index(
             peak_index,
             heatmap.shape,
         )
 
-        peak_value = float(
-            heatmap[peak_row, peak_column]
-        )
-
-        # -----------------------------------------------------
-        # Convert grid index → physical coordinates
-        # -----------------------------------------------------
-
-        x = (
-            GRID_X_MIN
-            + peak_column * GRID_INCREMENT
-        )
-
-        y = (
-            GRID_Y_MAX
-            - peak_row * GRID_INCREMENT
-        )
-
-        z = GRID_Z
+        value = float(heatmap[row, column])
+        
+        # Pull true angles from the steering factory's domain
+        azimuth = float(self.az_values[column])
+        elevation = float(self.el_values[row])
 
         return {
-            "x": float(x),
-            "y": float(y),
-            "z": float(z),
-            "value": peak_value,
-            "row": int(peak_row),
-            "column": int(peak_column),
+            "azimuth": azimuth,
+            "elevation": elevation,
+            "value": value,
+            "row": int(row),
+            "column": int(column),
         }
-
-    # =========================================================
-    # Convenience method
-    # =========================================================
 
     def localize_with_peak(
         self,
         frame: np.ndarray,
     ) -> tuple[np.ndarray, dict[str, float | int]]:
-        """
-        Run MUSIC localization and immediately extract the strongest
-        estimated source position.
-
-        Parameters
-        ----------
-        frame : numpy.ndarray
-            Audio frame with shape:
-
-                (FRAME_SIZE, NUM_CHANNELS)
-
-        Returns
-        -------
-        tuple
-            (
-                heatmap,
-                peak_position
-            )
-
-        Example
-        -------
-        heatmap, peak = localizer.localize_with_peak(frame)
-
-        print(
-            peak["x"],
-            peak["y"],
-            peak["z"],
-        )
-        """
+        """Run MUSIC and return both heatmap and strongest peak."""
 
         heatmap = self.localize(frame)
+        return heatmap, self.get_peak_position(heatmap)
 
-        peak = self.get_peak_position(
-            heatmap
+    # ------------------------------------------------------------------
+    # State
+    # ------------------------------------------------------------------
+
+    def reset_csm_state(self) -> None:
+        """Clear all per-frequency temporal CSM state."""
+        self._smoothed_csms.clear()
+
+    # ------------------------------------------------------------------
+    # AudioFrame integration
+    # ------------------------------------------------------------------
+
+    def localize_audio_frame(
+        self,
+        audio_frame: AudioFrame,
+    ) -> AcousticFrame:
+        """Convert one AudioFrame into a project AcousticFrame."""
+
+        if not isinstance(audio_frame, AudioFrame):
+            raise TypeError(
+                "localize_audio_frame expects an AudioFrame."
+            )
+
+        data = np.asarray(audio_frame.data)
+
+        if data.ndim != 2:
+            raise ValueError(
+                "AudioFrame data must be 2-dimensional."
+            )
+
+        if data.shape != (self.frame_size, self.num_mics):
+            raise ValueError(
+                f"Expected audio shape "
+                f"({self.frame_size}, {self.num_mics}), "
+                f"received {data.shape}."
+            )
+
+        start = time.perf_counter()
+
+        heatmap, peak = self.localize_with_peak(data)
+
+        processing_time = time.perf_counter() - start
+
+        confidence = float(
+            np.clip(peak["value"], 0.0, 1.0)
         )
 
-        return heatmap, peak
+        # We no longer pretend angles are physical x/y/z distances.
+        localization = AcousticLocalization(
+            x=0.0,
+            y=0.0,
+            z=0.0,
+            response=float(peak["value"]),
+            frequency=None,
+            confidence=confidence,
+            valid=True,
+            source_count=self.n_sources,
+        )
+
+        return AcousticFrame(
+            frame_id=audio_frame.frame_id,
+            timestamp=audio_frame.timestamp,
+            localization=localization,
+            sample_rate=float(self.sample_rate),
+            frame_size=int(self.frame_size),
+            processing_time=processing_time,
+            metadata={
+                "source": "MusicLocalizer",
+                "peak_row": int(peak["row"]),
+                "peak_column": int(peak["column"]),
+                "azimuth_deg": float(peak["azimuth"]),
+                "elevation_deg": float(peak["elevation"]),
+                "heatmap_shape": tuple(
+                    int(v) for v in heatmap.shape
+                ),
+                "heatmap": heatmap,
+                "num_microphones": self.num_mics,
+                "num_frequencies": len(self.analysis_bands),
+            },
+        )

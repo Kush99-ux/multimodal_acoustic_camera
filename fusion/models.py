@@ -99,6 +99,27 @@ class MultimodalResult:
         return self.acoustic.localization is not None
 
     @property
+    def acoustic_position(self) -> Optional[tuple[float, float, float]]:
+        """
+        Return the localized acoustic source position.
+
+        The position remains in the acoustic-array coordinate system
+        until camera/acoustic calibration is implemented.
+        """
+
+        return self.acoustic.position
+
+    @property
+    def acoustic_heatmap(self):
+        """
+        Return the MUSIC heatmap associated with this result, if present.
+
+        The actual heatmap is preserved in acoustic frame metadata.
+        """
+
+        return self.acoustic.metadata.get("heatmap")
+
+    @property
     def is_valid(self) -> bool:
         """
         Whether this represents a valid synchronized result.

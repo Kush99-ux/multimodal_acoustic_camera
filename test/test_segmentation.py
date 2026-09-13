@@ -39,7 +39,7 @@ import time
 
 import cv2
 
-from camera import CameraAcquisition
+from vision.camera import CameraAcquisition
 from vision.segmentation import YOLOSegmenter
 
 
