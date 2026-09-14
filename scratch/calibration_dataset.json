@@ -1,0 +1,62 @@
+[
+  {
+    "label": "LEVEL",
+    "camera_x": 321,
+    "camera_y": 231,
+    "acoustic_azimuth": 91.25,
+    "acoustic_elevation": -6.0,
+    "elevation_reliable": true,
+    "azimuth_reliable": true,
+    "setup": "current_elevation_test"
+  },
+  {
+    "label": "ABOVE",
+    "camera_x": 322,
+    "camera_y": 152,
+    "acoustic_azimuth": 88.25,
+    "acoustic_elevation": 12.25,
+    "elevation_reliable": true,
+    "azimuth_reliable": true,
+    "setup": "current_elevation_test"
+  },
+  {
+    "label": "BELOW",
+    "camera_x": 322,
+    "camera_y": 340,
+    "acoustic_azimuth": 83.25,
+    "acoustic_elevation": -17.0,
+    "elevation_reliable": true,
+    "azimuth_reliable": true,
+    "setup": "current_elevation_test"
+  },
+  {
+    "label": "HORIZONTAL_CENTER",
+    "camera_x": 319,
+    "camera_y": 244,
+    "acoustic_azimuth": 90.75,
+    "acoustic_elevation": -18.75,
+    "elevation_reliable": false,
+    "azimuth_reliable": true,
+    "setup": "earlier_horizontal_test"
+  },
+  {
+    "label": "HORIZONTAL_LEFT",
+    "camera_x": 89,
+    "camera_y": 255,
+    "acoustic_azimuth": 106.0,
+    "acoustic_elevation": -18.75,
+    "elevation_reliable": false,
+    "azimuth_reliable": true,
+    "setup": "earlier_horizontal_test"
+  },
+  {
+    "label": "HORIZONTAL_RIGHT",
+    "camera_x": 495,
+    "camera_y": 205,
+    "acoustic_azimuth": 65.0,
+    "acoustic_elevation": -18.75,
+    "elevation_reliable": false,
+    "azimuth_reliable": true,
+    "setup": "earlier_horizontal_test"
+  }
+]

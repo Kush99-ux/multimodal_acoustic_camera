@@ -55,6 +55,8 @@ class AcousticHeatmapVisualizer:
         mirror_camera: bool = MIRROR_CAMERA,
         colormap: int = cv2.COLORMAP_INFERNO,
         diagnostic: bool = False,
+        azimuth_center: float = 90.0,
+        elevation_center: float = -6.0,
     ) -> None:
 
         if not 0.0 <= alpha <= 1.0:
@@ -70,8 +72,8 @@ class AcousticHeatmapVisualizer:
         self.colormap = int(colormap)
         self.diagnostic = bool(diagnostic)
 
-        self.azimuth_center = 90.0
-        self.elevation_center = 0.0
+        self.azimuth_center = float(azimuth_center)
+        self.elevation_center = float(elevation_center)
 
     # --------------------------------------------------------
     # Angles -> camera pixels
@@ -88,8 +90,8 @@ class AcousticHeatmapVisualizer:
         Convert angular direction (azimuth, elevation in degrees) to pixel coordinates.
 
         Physical alignment (outward-facing camera, no mirror):
-          - Azimuth < 90° -> Left (x_norm < 0.5 -> u < width/2)
-          - Azimuth > 90° -> Right (x_norm > 0.5 -> u > width/2)
+          - Azimuth > 90° (-X) -> Camera Left (x_norm < 0.5 -> u < width/2)
+          - Azimuth < 90° (+X) -> Camera Right (x_norm > 0.5 -> u > width/2)
           - Elevation > 0° -> Up (y_norm > 0.5 -> v < height/2)
           - Elevation < 0° -> Down (y_norm < 0.5 -> v > height/2)
         """
@@ -99,7 +101,7 @@ class AcousticHeatmapVisualizer:
         el_min = self.elevation_center - (self.vertical_fov_deg / 2.0)
         el_max = self.elevation_center + (self.vertical_fov_deg / 2.0)
 
-        x_norm = (azimuth_deg - az_min) / (az_max - az_min)
+        x_norm = (az_max - azimuth_deg) / (az_max - az_min)
         y_norm = (elevation_deg - el_min) / (el_max - el_min)
 
         u = int(x_norm * width)
@@ -163,10 +165,10 @@ class AcousticHeatmapVisualizer:
             #   row 0 is el_min (-18.75 deg, bottom)
             #   row -1 is el_max (+18.75 deg, top)
             # In OpenCV image space:
-            #   y = 0 is top
-            #   y = H-1 is bottom
-            # Therefore, vertically flip the heatmap so higher elevation maps to top of image:
-            heatmap_oriented = np.flipud(raw_heatmap)
+            #   y = 0 is top, y = H-1 is bottom
+            #   x = 0 is left, x = W-1 is right
+            # Vertically flip (higher elevation to top) and horizontally flip (azimuth > 90° to left):
+            heatmap_oriented = np.fliplr(np.flipud(raw_heatmap))
 
             heatmap_u8 = (np.clip(heatmap_oriented, 0.0, 1.0) * 255.0).astype(np.uint8)
             heatmap_resized = cv2.resize(

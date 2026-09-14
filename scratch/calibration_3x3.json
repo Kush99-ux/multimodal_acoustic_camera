@@ -1,0 +1,170 @@
+{
+  "ABOVE_CENTER": {
+    "position": "ABOVE_CENTER",
+    "camera_x": 322,
+    "camera_y": 152,
+    "acoustic_azimuth": 88.25,
+    "acoustic_elevation": 12.25,
+    "sample_count": 10,
+    "representative_image": "scratch/above_elevation_rep.jpg",
+    "raw_image": "scratch/above_elevation_raw.jpg",
+    "setup": "current_elevation_test"
+  },
+  "LEVEL_CENTER": {
+    "position": "LEVEL_CENTER",
+    "camera_x": 321,
+    "camera_y": 231,
+    "acoustic_azimuth": 91.25,
+    "acoustic_elevation": -6.0,
+    "sample_count": 10,
+    "representative_image": "scratch/level_elevation_rep.jpg",
+    "raw_image": "scratch/level_elevation_raw.jpg",
+    "setup": "current_elevation_test"
+  },
+  "BELOW_CENTER": {
+    "position": "BELOW_CENTER",
+    "camera_x": 322,
+    "camera_y": 340,
+    "acoustic_azimuth": 83.25,
+    "acoustic_elevation": -17.0,
+    "sample_count": 10,
+    "representative_image": "scratch/below_elevation_rep.jpg",
+    "raw_image": "scratch/below_elevation_raw.jpg",
+    "setup": "current_elevation_test"
+  },
+  "LEVEL_LEFT": {
+    "position": "LEVEL_LEFT",
+    "camera_x": 146,
+    "camera_y": 258,
+    "acoustic_azimuth": 103.25,
+    "acoustic_elevation": -17.25,
+    "azimuth_std": 1.004987562112089,
+    "elevation_std": 1.5297058540778354,
+    "sample_count": 10,
+    "representative_image": "scratch\\calib_level_left_rep.jpg",
+    "raw_image": "scratch\\calib_level_left_raw.jpg",
+    "records": [
+      {
+        "index": 1,
+        "frame_id": 146,
+        "sync_delta_ms": 27.239999966695905,
+        "azimuth": 103.0,
+        "elevation": -17.25,
+        "db_level": 30.309391331005173,
+        "overlay_u": 153,
+        "overlay_v": 384,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 2,
+        "frame_id": 172,
+        "sync_delta_ms": 27.1239000139758,
+        "azimuth": 103.0,
+        "elevation": -16.75,
+        "db_level": 29.649079630550254,
+        "overlay_u": 153,
+        "overlay_v": 377,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 3,
+        "frame_id": 174,
+        "sync_delta_ms": 9.953100001439452,
+        "azimuth": 103.0,
+        "elevation": -17.25,
+        "db_level": 30.81779978975802,
+        "overlay_u": 153,
+        "overlay_v": 384,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 4,
+        "frame_id": 175,
+        "sync_delta_ms": 25.764300022274256,
+        "azimuth": 105.0,
+        "elevation": -18.75,
+        "db_level": 32.27768210530091,
+        "overlay_u": 128,
+        "overlay_v": 403,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 5,
+        "frame_id": 177,
+        "sync_delta_ms": 10.423999978229403,
+        "azimuth": 103.5,
+        "elevation": -18.75,
+        "db_level": 33.33226310493549,
+        "overlay_u": 147,
+        "overlay_v": 403,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 6,
+        "frame_id": 178,
+        "sync_delta_ms": 23.372899973765016,
+        "azimuth": 103.0,
+        "elevation": -18.75,
+        "db_level": 34.08588795679388,
+        "overlay_u": 153,
+        "overlay_v": 403,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 7,
+        "frame_id": 180,
+        "sync_delta_ms": 6.226700032129884,
+        "azimuth": 102.5,
+        "elevation": -18.25,
+        "db_level": 33.512824851809185,
+        "overlay_u": 160,
+        "overlay_v": 396,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 8,
+        "frame_id": 182,
+        "sync_delta_ms": 9.027099993545562,
+        "azimuth": 103.5,
+        "elevation": -16.75,
+        "db_level": 32.91853332466559,
+        "overlay_u": 147,
+        "overlay_v": 377,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 9,
+        "frame_id": 183,
+        "sync_delta_ms": 37.28029999183491,
+        "azimuth": 105.5,
+        "elevation": -14.75,
+        "db_level": 32.72634825918831,
+        "overlay_u": 121,
+        "overlay_v": 352,
+        "click_x": 146,
+        "click_y": 258
+      },
+      {
+        "index": 10,
+        "frame_id": 185,
+        "sync_delta_ms": 12.792900030035526,
+        "azimuth": 105.0,
+        "elevation": -14.25,
+        "db_level": 31.50675315360359,
+        "overlay_u": 128,
+        "overlay_v": 345,
+        "click_x": 146,
+        "click_y": 258
+      }
+    ],
+    "timestamp": 1789367003.7781835
+  }
+}

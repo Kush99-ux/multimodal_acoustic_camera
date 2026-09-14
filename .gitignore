@@ -1,5 +1,4 @@
-# Python
-
+# Python & Bytecode
 __pycache__/
 *.py[cod]
 *.pyo
@@ -8,48 +7,52 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Virtual environments
-
+# Virtual Environments
 venv/
 .venv/
 env/
 ENV/
 acoustic_env/
 
-# IDE
+# Environment variables & secrets
+.env
+.env.*
+*.pem
+*.key
 
+# IDE & Editors
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS
-
+# Operating System
 .DS_Store
 Thumbs.db
+ehthumbs.db
 
 # Logs
-
 *.log
 
-# Model caches
-
+# Model training & inference caches
 runs/
 ultralytics/
 
 # Temporary files
-
 *.tmp
 *.bak
+*.swp
 
 # Jupyter
-
 .ipynb_checkpoints/
 
-# Build
-
+# Build artifacts
 build/
 dist/
 
-# Generated test output
-*.jpg
-*.png
+# Ephemeral test outputs (single scratch runs)
+test_heatmap_output.jpg
