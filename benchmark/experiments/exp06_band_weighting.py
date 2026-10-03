@@ -1,0 +1,84 @@
+"""
+benchmark.experiments.exp06_band_weighting
+"""
+from __future__ import annotations
+import os, sys, time
+script_dir = os.path.dirname(os.path.abspath(__file__))
+while script_dir in sys.path:
+    sys.path.remove(script_dir)
+PROJECT_ROOT = os.path.abspath(os.path.join(script_dir, "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+import numpy as np
+from typing import Dict, Any, List
+from benchmark.variants.baseline import BaselineProductionVariant
+from benchmark.core.generator import SyntheticAudioGenerator
+from benchmark.models.source import SoundSource, WaveformType
+from benchmark.models.scenario import BenchmarkScenario, ReflectionPath, MicrophoneImpairment
+from benchmark.core.metrics import evaluate_trial, calculate_angular_error
+from benchmark.config.benchmark_config import PLOTS_DIR
+import benchmark.core.plotting as bp
+
+def run_single_trial(localizer, generator, scenario, trial_index=0):
+    sig = generator.generate(scenario)
+    t0 = time.perf_counter()
+    heatmap, peak = localizer.localize(sig.data)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    true_az = scenario.sources[0].azimuth_deg if scenario.sources else 90.0
+    true_el = scenario.sources[0].elevation_deg if scenario.sources else 0.0
+    return evaluate_trial(
+        scenario_id=scenario.scenario_id,
+        trial_index=trial_index,
+        true_az=true_az,
+        true_el=true_el,
+        heatmap=heatmap,
+        peak_dict=peak,
+        processing_time_ms=elapsed_ms,
+    )
+
+from benchmark.variants.band_weighting import BandWeightingVariant
+
+def run_band_weighting_experiment(generator=None) -> Dict[str, Any]:
+    if generator is None: generator = SyntheticAudioGenerator()
+
+    schemes = ["baseline_normalized", "raw", "energy", "dynamic_range", "active_gated"]
+    names = ["Baseline (Min-Max)", "Raw Unweighted", "Energy Weighted", "Dynamic Range", "Active Gated"]
+    
+    sc = BenchmarkScenario(
+        scenario_id="band_weighting_test",
+        category="band_weighting",
+        description="Selective spectral tone",
+        sources=[SoundSource(azimuth_deg=103.0, elevation_deg=0.0, waveform=WaveformType.TONE, frequency_hz=1000.0)],
+        snr_db=30.0,
+    )
+
+    errors = []
+    contrasts = []
+
+    for scheme in schemes:
+        if scheme == "baseline_normalized":
+            var = BaselineProductionVariant()
+        else:
+            var = BandWeightingVariant(strategy=scheme)
+        var.reset_state()
+        res = run_single_trial(var, generator, sc)
+        errors.append(res.angular_error_deg)
+        contrasts.append(res.peak_contrast)
+
+    os.makedirs(PLOTS_DIR, exist_ok=True)
+    fig5_path = os.path.join(PLOTS_DIR, "fig05_band_weighting_comparison.png")
+    bp.plot_band_weighting_comparison(names, errors, contrasts, fig5_path)
+
+    return {
+        "schemes": schemes,
+        "names": names,
+        "errors": errors,
+        "contrasts": contrasts,
+    }
+
+if __name__ == "__main__":
+    print("[Exp 06] Running band weighting comparison experiment...")
+    res = run_band_weighting_experiment()
+    for n, e, c in zip(res["names"], res["errors"], res["contrasts"]):
+        print(f"  {n:25s} -> Err: {e:4.2f}°, Contrast: {c:5.2f}")

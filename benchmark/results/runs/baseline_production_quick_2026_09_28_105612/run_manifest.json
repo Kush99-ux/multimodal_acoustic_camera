@@ -1,0 +1,26 @@
+{
+  "run_id": "baseline_production_quick_2026_09_28_105612",
+  "timestamp": "2026-09-28T10:56:13.102850",
+  "benchmark_version": "1.0.0",
+  "variant": "baseline_production",
+  "variant_description": "Current production 6-band MUSIC localizer with EMA alpha=0.30 and per-band min-max normalization",
+  "parameters": {
+    "frequencies": [
+      500.0,
+      1000.0,
+      1500.0,
+      2000.0,
+      2500.0,
+      3000.0
+    ],
+    "band_width": 500.0,
+    "csm_alpha": 0.3,
+    "normalization": "per_band_min_max",
+    "sigmoid_gain": 3.0,
+    "noise_threshold_db": 15.0
+  },
+  "suite_tier": "quick",
+  "total_scenarios": 14,
+  "total_run_time_seconds": 0.21825759997591376,
+  "is_baseline": false
+}

@@ -1,0 +1,352 @@
+{
+  "mathematical_parity": true,
+  "latency_accumulation": [
+    {
+      "name": "Reference (Drains queue every frame, 15 FPS)",
+      "fps": 15.0,
+      "mode": "drain_all",
+      "latencies": {
+        "1.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "5.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "10.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "30.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "60.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        }
+      }
+    },
+    {
+      "name": "Reference (Drains queue every frame, 5 FPS)",
+      "fps": 5.0,
+      "mode": "drain_all",
+      "latencies": {
+        "1.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "5.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "10.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "30.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "60.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        }
+      }
+    },
+    {
+      "name": "Current (Single hop pop, Fast 23.44 FPS)",
+      "fps": 23.44,
+      "mode": "single_pop",
+      "latencies": {
+        "1.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "5.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "10.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "30.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        },
+        "60.0s": {
+          "buffered_hops": 0,
+          "latency_sec": 0.0,
+          "lag_display": "0.00 s"
+        }
+      }
+    },
+    {
+      "name": "Current (Single hop pop, Typical 15 FPS)",
+      "fps": 15.0,
+      "mode": "single_pop",
+      "latencies": {
+        "1.0s": {
+          "buffered_hops": 8,
+          "latency_sec": 0.3413333333333333,
+          "lag_display": "0.34 s"
+        },
+        "5.0s": {
+          "buffered_hops": 42,
+          "latency_sec": 1.792,
+          "lag_display": "1.79 s"
+        },
+        "10.0s": {
+          "buffered_hops": 84,
+          "latency_sec": 3.584,
+          "lag_display": "3.58 s"
+        },
+        "30.0s": {
+          "buffered_hops": 253,
+          "latency_sec": 10.794666666666666,
+          "lag_display": "10.79 s"
+        },
+        "60.0s": {
+          "buffered_hops": 506,
+          "latency_sec": 21.589333333333332,
+          "lag_display": "21.59 s"
+        }
+      }
+    },
+    {
+      "name": "Current (Single hop pop, YOLO+GUI 5 FPS)",
+      "fps": 5.0,
+      "mode": "single_pop",
+      "latencies": {
+        "1.0s": {
+          "buffered_hops": 18,
+          "latency_sec": 0.768,
+          "lag_display": "0.77 s"
+        },
+        "5.0s": {
+          "buffered_hops": 92,
+          "latency_sec": 3.925333333333333,
+          "lag_display": "3.93 s"
+        },
+        "10.0s": {
+          "buffered_hops": 184,
+          "latency_sec": 7.850666666666666,
+          "lag_display": "7.85 s"
+        },
+        "30.0s": {
+          "buffered_hops": 553,
+          "latency_sec": 23.594666666666665,
+          "lag_display": "23.59 s"
+        },
+        "60.0s": {
+          "buffered_hops": 1106,
+          "latency_sec": 47.18933333333333,
+          "lag_display": "47.19 s"
+        }
+      }
+    },
+    {
+      "name": "Current (Single hop pop, Heavy load 3 FPS)",
+      "fps": 3.0,
+      "mode": "single_pop",
+      "latencies": {
+        "1.0s": {
+          "buffered_hops": 20,
+          "latency_sec": 0.8533333333333333,
+          "lag_display": "0.85 s"
+        },
+        "5.0s": {
+          "buffered_hops": 102,
+          "latency_sec": 4.351999999999999,
+          "lag_display": "4.35 s"
+        },
+        "10.0s": {
+          "buffered_hops": 204,
+          "latency_sec": 8.703999999999999,
+          "lag_display": "8.70 s"
+        },
+        "30.0s": {
+          "buffered_hops": 613,
+          "latency_sec": 26.154666666666667,
+          "lag_display": "26.15 s"
+        },
+        "60.0s": {
+          "buffered_hops": 1226,
+          "latency_sec": 52.309333333333335,
+          "lag_display": "52.31 s"
+        }
+      }
+    }
+  ],
+  "transient_vs_stationary": {
+    "pink": [
+      {
+        "frame": 0,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 50.32365962718034,
+        "db": 63.99772595916774
+      },
+      {
+        "frame": 1,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 51.53977721375942,
+        "db": 63.63685289272726
+      },
+      {
+        "frame": 2,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 52.813794369801904,
+        "db": 63.64807779864625
+      },
+      {
+        "frame": 3,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 52.44448976085215,
+        "db": 64.5044337869378
+      },
+      {
+        "frame": 4,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 52.51903204832376,
+        "db": 64.01021070750737
+      },
+      {
+        "frame": 5,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 52.75661276671498,
+        "db": 63.57578796207273
+      },
+      {
+        "frame": 6,
+        "azimuth": 75.0,
+        "az_err": 0.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 51.673515788379184,
+        "db": 63.71020145565269
+      },
+      {
+        "frame": 7,
+        "azimuth": 75.5,
+        "az_err": 0.5,
+        "peak_val": 0.9999999984255662,
+        "contrast": 50.813779893168444,
+        "db": 63.85757477042063
+      },
+      {
+        "frame": 8,
+        "azimuth": 75.5,
+        "az_err": 0.5,
+        "peak_val": 0.9999999984255662,
+        "contrast": 50.85023862125248,
+        "db": 63.68801682688822
+      },
+      {
+        "frame": 9,
+        "azimuth": 75.5,
+        "az_err": 0.5,
+        "peak_val": 0.9999999984255662,
+        "contrast": 50.29303887853376,
+        "db": 63.92687132850993
+      }
+    ],
+    "snap": [
+      {
+        "frame": 0,
+        "status": "Quiet baseline",
+        "azimuth": 92.5,
+        "az_err": 17.5,
+        "peak_val": 0.9999999984255662,
+        "contrast": 1.4790159055776768,
+        "db": 30.031572316668132
+      },
+      {
+        "frame": 1,
+        "status": "Quiet baseline",
+        "azimuth": 86.5,
+        "az_err": 11.5,
+        "peak_val": 0.9999999984255662,
+        "contrast": 1.4970348462787424,
+        "db": 30.005579303260063
+      },
+      {
+        "frame": 2,
+        "status": "Quiet baseline",
+        "azimuth": 86.0,
+        "az_err": 11.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 1.3844022092466641,
+        "db": 29.981829139891964
+      },
+      {
+        "frame": 3,
+        "status": "SNAP FRAME",
+        "azimuth": 76.0,
+        "az_err": 1.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 25.206137390142736,
+        "db": 55.46421594062704
+      },
+      {
+        "frame": 4,
+        "status": "Post-snap +1",
+        "azimuth": 76.0,
+        "az_err": 1.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 25.230524579019068,
+        "db": 30.013505437602973
+      },
+      {
+        "frame": 5,
+        "status": "Post-snap +2",
+        "azimuth": 76.0,
+        "az_err": 1.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 25.21631493953574,
+        "db": 30.023091409314233
+      },
+      {
+        "frame": 6,
+        "status": "Quiet baseline",
+        "azimuth": 76.0,
+        "az_err": 1.0,
+        "peak_val": 0.9999999984255662,
+        "contrast": 25.246147777870238,
+        "db": 29.995335943502887
+      }
+    ]
+  },
+  "eigenvalue_dilution": {
+    "snr_inst": 100.99999999999883,
+    "snr_ema": 30.99999999999992,
+    "snr_next": 21.999999999999915,
+    "attenuation_pct": 70.0
+  }
+}

@@ -177,6 +177,8 @@ class AudioAcquisition:
 
         self._overflow_count = 0
 
+        self._latest_capture_time: Optional[float] = None
+
     # ========================================================
     # PortAudio callback
     # ========================================================
@@ -206,6 +208,8 @@ class AudioAcquisition:
                 self._overflow_count += 1
 
         try:
+
+            callback_time = time.perf_counter()
 
             block = np.asarray(
                 indata,
@@ -245,6 +249,8 @@ class AudioAcquisition:
                     block.shape[0]
                 )
 
+                self._latest_capture_time = callback_time
+
         except Exception as exc:
 
             self._callback_error = exc
@@ -279,6 +285,8 @@ class AudioAcquisition:
         self._input_samples_received = 0
 
         self._overflow_count = 0
+
+        self._latest_capture_time = None
 
         try:
 
@@ -382,6 +390,8 @@ class AudioAcquisition:
             # Check buffer
             # ------------------------------------------------
 
+            capture_timestamp: Optional[float] = None
+
             with self._buffer_lock:
 
                 if (
@@ -389,25 +399,21 @@ class AudioAcquisition:
                     >= self.frame_size
                 ):
 
+                    # Extract newest frame_size samples from tail of buffer
                     frame_data = self._buffer[
-                        :self.frame_size
+                        -self.frame_size:
                     ].copy()
 
-                    # Advance by hop size.
-                    #
-                    # This gives overlapping frames when:
-                    #
-                    # FRAME_SIZE > HOP_SIZE
-                    #
-                    remaining_start = self.hop_size
+                    capture_timestamp = self._latest_capture_time
 
-                    if (
-                        remaining_start
-                        < self._buffer.shape[0]
-                    ):
+                    # Retain trailing overlap for next analysis window while
+                    # discarding any older stale backlog.
+                    overlap_samples = self.frame_size - self.hop_size
+
+                    if overlap_samples > 0:
 
                         self._buffer = self._buffer[
-                            remaining_start:
+                            -overlap_samples:
                         ].copy()
 
                     else:
@@ -440,7 +446,11 @@ class AudioAcquisition:
 
             time.sleep(0.001)
 
-        timestamp = time.perf_counter()
+        timestamp = (
+            capture_timestamp
+            if capture_timestamp is not None
+            else time.perf_counter()
+        )
 
         self.frame_count += 1
 

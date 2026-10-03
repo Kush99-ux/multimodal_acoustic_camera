@@ -1,0 +1,14 @@
+{
+  "run_id": "csm_ema_fast_0.60_standard_2026_09_28_110656",
+  "timestamp": "2026-09-28T11:06:58.390695",
+  "benchmark_version": "1.0.0",
+  "variant": "csm_ema_fast_0.60",
+  "variant_description": "MUSIC localizer with modified CSM EMA alpha=0.60",
+  "parameters": {
+    "csm_alpha": 0.6
+  },
+  "suite_tier": "standard",
+  "total_scenarios": 128,
+  "total_run_time_seconds": 2.2312269000103697,
+  "is_baseline": false
+}

@@ -1,0 +1,165 @@
+{
+  "run_id": "V-004",
+  "session_id": "SES-2026-09-19-125659",
+  "timestamp": "2026-09-19T13:03:56.348982",
+  "test_type": "vertical",
+  "target_label": "LEVEL",
+  "frame_count": 20,
+  "median_azimuth": 97.25,
+  "median_elevation": -13.75,
+  "azimuth_std": 2.225421308426789,
+  "elevation_std": 2.360614326822575,
+  "ground_truth_x": 215,
+  "ground_truth_y": 299,
+  "pixel_error": 46.8407398016698,
+  "sync_percentage": 100.0,
+  "median_timestamp_difference_ms": 13.705049990676343,
+  "max_timestamp_difference_ms": 35.96579999430105,
+  "status": "OBSERVED",
+  "notes": "Vertical trial for LEVEL",
+  "config_metadata": "{\"target_frames\": 20, \"start_time\": \"2026-09-19T13:03:52.599699\"}",
+  "id": null,
+  "frames_collected": 20,
+  "raw_frames": [
+    {
+      "az": 98.5,
+      "el": -14.25,
+      "sync_delta_ms": 32.85580000374466,
+      "synchronized": true,
+      "pixel_error": 46.17358552246078
+    },
+    {
+      "az": 98.5,
+      "el": -14.25,
+      "sync_delta_ms": 32.85580000374466,
+      "synchronized": true,
+      "pixel_error": 46.17358552246078
+    },
+    {
+      "az": 98.5,
+      "el": -13.75,
+      "sync_delta_ms": 28.512800025055185,
+      "synchronized": true,
+      "pixel_error": 40.19950248448356
+    },
+    {
+      "az": 98.5,
+      "el": -13.75,
+      "sync_delta_ms": 28.512800025055185,
+      "synchronized": true,
+      "pixel_error": 40.19950248448356
+    },
+    {
+      "az": 98.5,
+      "el": -13.75,
+      "sync_delta_ms": 0.3175000019837171,
+      "synchronized": true,
+      "pixel_error": 40.19950248448356
+    },
+    {
+      "az": 98.5,
+      "el": -13.75,
+      "sync_delta_ms": 0.3175000019837171,
+      "synchronized": true,
+      "pixel_error": 40.19950248448356
+    },
+    {
+      "az": 100.5,
+      "el": -14.25,
+      "sync_delta_ms": 4.579000000376254,
+      "synchronized": true,
+      "pixel_error": 54.91812087098393
+    },
+    {
+      "az": 100.5,
+      "el": -14.25,
+      "sync_delta_ms": 4.579000000376254,
+      "synchronized": true,
+      "pixel_error": 54.91812087098393
+    },
+    {
+      "az": 100.0,
+      "el": -14.75,
+      "sync_delta_ms": 0.2052999916486442,
+      "synchronized": true,
+      "pixel_error": 57.77542730261716
+    },
+    {
+      "az": 100.0,
+      "el": -14.75,
+      "sync_delta_ms": 0.2052999916486442,
+      "synchronized": true,
+      "pixel_error": 57.77542730261716
+    },
+    {
+      "az": 95.5,
+      "el": -13.75,
+      "sync_delta_ms": 22.831099980976433,
+      "synchronized": true,
+      "pixel_error": 52.49761899362675
+    },
+    {
+      "az": 95.5,
+      "el": -13.75,
+      "sync_delta_ms": 22.831099980976433,
+      "synchronized": true,
+      "pixel_error": 52.49761899362675
+    },
+    {
+      "az": 95.5,
+      "el": -11.75,
+      "sync_delta_ms": 2.1717000054195523,
+      "synchronized": true,
+      "pixel_error": 36.76955262170047
+    },
+    {
+      "az": 95.5,
+      "el": -11.75,
+      "sync_delta_ms": 2.1717000054195523,
+      "synchronized": true,
+      "pixel_error": 36.76955262170047
+    },
+    {
+      "az": 96.0,
+      "el": -9.75,
+      "sync_delta_ms": 0.1503000094089657,
+      "synchronized": true,
+      "pixel_error": 30.083217912982647
+    },
+    {
+      "az": 96.0,
+      "el": -9.75,
+      "sync_delta_ms": 0.1503000094089657,
+      "synchronized": true,
+      "pixel_error": 30.083217912982647
+    },
+    {
+      "az": 95.0,
+      "el": -8.75,
+      "sync_delta_ms": 24.562400009017438,
+      "synchronized": true,
+      "pixel_error": 47.50789408087881
+    },
+    {
+      "az": 95.0,
+      "el": -8.75,
+      "sync_delta_ms": 24.562400009017438,
+      "synchronized": true,
+      "pixel_error": 47.50789408087881
+    },
+    {
+      "az": 93.5,
+      "el": -8.25,
+      "sync_delta_ms": 35.96579999430105,
+      "synchronized": true,
+      "pixel_error": 67.53517601961218
+    },
+    {
+      "az": 93.5,
+      "el": -8.25,
+      "sync_delta_ms": 35.96579999430105,
+      "synchronized": true,
+      "pixel_error": 67.53517601961218
+    }
+  ]
+}

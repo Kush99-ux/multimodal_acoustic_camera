@@ -44,6 +44,7 @@ from config.settings import (
     SIGMOID_MIDPOINT,
     FREQ_CENTERS,
     BAND_WIDTH,
+    BAND_WEIGHTING_MODE,
 )
 
 
@@ -59,6 +60,7 @@ class MusicLocalizer:
         noise_threshold_db: float = NOISE_THRESHOLD_DB,
         sigmoid_gain: float = SIGMOID_GAIN,
         sigmoid_midpoint: float = SIGMOID_MIDPOINT,
+        band_weighting_mode: str = BAND_WEIGHTING_MODE,
     ) -> None:
 
         self.sample_rate = int(sample_rate)
@@ -68,6 +70,7 @@ class MusicLocalizer:
         self.noise_threshold_db = float(noise_threshold_db)
         self.sigmoid_gain = float(sigmoid_gain)
         self.sigmoid_midpoint = float(sigmoid_midpoint)
+        self.band_weighting_mode = str(band_weighting_mode).lower().strip()
 
         if self.sample_rate <= 0:
             raise ValueError("sample_rate must be positive.")
@@ -77,6 +80,11 @@ class MusicLocalizer:
             raise ValueError("smoothing must be between 0 and 1.")
         if self.n_sources < 0:
             raise ValueError("n_sources cannot be negative.")
+        if self.band_weighting_mode not in ("baseline", "energy"):
+            raise ValueError(
+                f"Unsupported band_weighting_mode: '{band_weighting_mode}'. "
+                f"Supported modes: 'baseline', 'energy'."
+            )
 
         # SteeringFactory owns the validated 42 mm UMA-16 geometry.
         self.steering_factory = SteeringFactory()
@@ -278,27 +286,61 @@ class MusicLocalizer:
         total_spectrum = np.zeros(n_grid_points, dtype=np.float64)
 
         # Step 2: Accumulate across 6 sub-bands
-        for i, center in enumerate(self.freq_centers):
-            idx_low, idx_high = self._band_bins[i]
-            if idx_high <= idx_low:
-                continue
+        if self.band_weighting_mode == "baseline":
+            # Golden Reference Baseline: unweighted sum of normalized sub-band spectra
+            for i, center in enumerate(self.freq_centers):
+                idx_low, idx_high = self._band_bins[i]
+                if idx_high <= idx_low:
+                    continue
 
-            csm_inst = self._compute_band_csm(spectrum, idx_low, idx_high)
-            csm_smooth = self._smooth_csm(float(center), csm_inst)
+                csm_inst = self._compute_band_csm(spectrum, idx_low, idx_high)
+                csm_smooth = self._smooth_csm(float(center), csm_inst)
 
-            # Steering matrix precomputed for this exact center frequency
-            steering = self.steering_factory.get_matrix(float(center))
+                # Steering matrix precomputed for this exact center frequency
+                steering = self.steering_factory.get_matrix(float(center))
 
-            # MUSIC pseudo-spectrum for this band
-            spectrum_band = self._music_band_spectrum(csm_smooth, steering)
+                # MUSIC pseudo-spectrum for this band
+                spectrum_band = self._music_band_spectrum(csm_smooth, steering)
 
-            # EXACT PER-BAND MIN-MAX NORMALIZATION (Golden Reference)
-            s_min = float(np.min(spectrum_band))
-            s_max = float(np.max(spectrum_band))
-            if s_max > s_min:
-                spectrum_band = (spectrum_band - s_min) / (s_max - s_min)
+                # EXACT PER-BAND MIN-MAX NORMALIZATION (Golden Reference)
+                s_min = float(np.min(spectrum_band))
+                s_max = float(np.max(spectrum_band))
+                if s_max > s_min:
+                    spectrum_band = (spectrum_band - s_min) / (s_max - s_min)
 
-            total_spectrum += spectrum_band
+                total_spectrum += spectrum_band
+
+        elif self.band_weighting_mode == "energy":
+            # Candidate Variant: physical spectral energy-weighted accumulation
+            band_energies = []
+            band_spectra = []
+            for i, center in enumerate(self.freq_centers):
+                idx_low, idx_high = self._band_bins[i]
+                if idx_high <= idx_low:
+                    continue
+
+                x_b = spectrum[:, idx_low:idx_high]
+                energy = float(np.sum(np.abs(x_b) ** 2))
+                band_energies.append(energy)
+
+                csm_inst = self._compute_band_csm(spectrum, idx_low, idx_high)
+                csm_smooth = self._smooth_csm(float(center), csm_inst)
+
+                steering = self.steering_factory.get_matrix(float(center))
+                spectrum_band = self._music_band_spectrum(csm_smooth, steering)
+
+                s_min = float(np.min(spectrum_band))
+                s_max = float(np.max(spectrum_band))
+                if s_max > s_min:
+                    norm_spec = (spectrum_band - s_min) / (s_max - s_min + 1e-12)
+                else:
+                    norm_spec = spectrum_band
+                band_spectra.append(norm_spec)
+
+            tot_energy = sum(band_energies) + 1e-12
+            for i in range(len(band_spectra)):
+                weight = band_energies[i] / tot_energy
+                total_spectrum += weight * band_spectra[i]
 
         # Step 3: Global min-max normalization to [0, 1]
         t_min = float(np.min(total_spectrum))

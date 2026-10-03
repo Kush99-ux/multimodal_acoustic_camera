@@ -29,7 +29,7 @@ Kush Sahu
 ESP32_IP = "172.27.8.165"
 
 # ESP32-CAM MJPEG stream endpoint.
-STREAM_URL = f"http://{ESP32_IP}:81/stream"
+STREAM_URL = "http://10.243.98.165:81/stream"
 
 # ------------------------------------------------------------
 # Camera stream resolution
@@ -181,6 +181,14 @@ NOISE_THRESHOLD_DB = 15.0
 ATTENUATION_POWER = 3.0
 SIGMOID_GAIN = 3.0
 SIGMOID_MIDPOINT = 0.5
+
+# ------------------------------------------------------------
+# Sub-band accumulation and weighting strategy
+# ------------------------------------------------------------
+# Controls how the 6 frequency-band pseudo-spectra are accumulated:
+#   "baseline" : Unweighted sum of min-max normalized sub-band spectra (Golden Reference)
+#   "energy"   : Spectral energy-weighted sum of min-max normalized sub-band spectra
+BAND_WEIGHTING_MODE = "baseline"
 
 # ------------------------------------------------------------
 # Acoustic frequency range (matching original 500-3000 Hz)

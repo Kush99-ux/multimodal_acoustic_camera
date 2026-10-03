@@ -39,8 +39,9 @@ ehthumbs.db
 *.log
 
 # Model training & inference caches
-runs/
+/runs/
 ultralytics/
+
 
 # Temporary files
 *.tmp
@@ -56,3 +57,5 @@ dist/
 
 # Ephemeral test outputs (single scratch runs)
 test_heatmap_output.jpg
+scratch/demo_results/
+

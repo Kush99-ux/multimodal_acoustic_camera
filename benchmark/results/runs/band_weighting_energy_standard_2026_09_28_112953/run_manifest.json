@@ -1,0 +1,14 @@
+{
+  "run_id": "band_weighting_energy_standard_2026_09_28_112953",
+  "timestamp": "2026-09-28T11:29:56.355560",
+  "benchmark_version": "1.0.0",
+  "variant": "band_weighting_energy",
+  "variant_description": "MUSIC localizer with 'energy' sub-band accumulation",
+  "parameters": {
+    "strategy": "energy"
+  },
+  "suite_tier": "standard",
+  "total_scenarios": 128,
+  "total_run_time_seconds": 2.7288052000803873,
+  "is_baseline": false
+}
