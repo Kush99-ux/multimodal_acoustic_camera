@@ -9,6 +9,8 @@ and records experiments to SQLite.
 from __future__ import annotations
 import json
 import os
+import queue
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -45,6 +47,16 @@ class ExperimentManager:
             self.runs_dir = os.path.join(self.data_dir, "runs")
 
         os.makedirs(self.runs_dir, exist_ok=True)
+
+        # Thread-safe bounded save queue and background worker
+        self._save_queue: queue.Queue = queue.Queue(maxsize=16)
+        self._stop_event = threading.Event()
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            name="ExperimentArtifactWorker",
+            daemon=True,
+        )
+        self._worker_thread.start()
 
         # Register working session in database
         self.repo.register_session(self.session_id, notes="GUI Demo Session")
@@ -261,8 +273,70 @@ class ExperimentManager:
         )
 
         # ----------------------------------------------------
-        # Save specific trial artifacts to data/runs/<run_id>/
+        # Non-blocking Persistence Task Enqueue
         # ----------------------------------------------------
+        task = {
+            "record": record,
+            "raw_frames": list(self.collected_frames),
+            "raw_image": self.latest_raw_image.copy() if self.latest_raw_image is not None else None,
+            "overlaid_image": self.latest_overlaid_image.copy() if self.latest_overlaid_image is not None else None,
+            "telemetry": self.latest_telemetry.copy() if self.latest_telemetry is not None else None,
+            "heatmap": self.latest_heatmap.copy() if self.latest_heatmap is not None else None,
+        }
+
+        try:
+            self._save_queue.put_nowait(task)
+        except queue.Full:
+            err_msg = f"Save queue is full (maxsize=16); dropping trial {run_id}"
+            print(f"[ExperimentManager] ERROR: {err_msg}")
+            self.last_error = err_msg
+
+        self.last_saved_experiment = record
+        return record
+
+    def _worker_loop(self) -> None:
+        """Worker thread processing queued experiment persistence tasks off the main thread."""
+        while not self._stop_event.is_set():
+            try:
+                task = self._save_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            try:
+                self._execute_save_task(task)
+            except Exception as e:
+                self.last_error = str(e)
+                print(f"[ExperimentManager] Worker unhandled error saving trial: {e}")
+            finally:
+                self._save_queue.task_done()
+
+        # Flush any remaining items in the queue after stop event is signalled
+        while True:
+            try:
+                task = self._save_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                self._execute_save_task(task)
+            except Exception as e:
+                self.last_error = str(e)
+                print(f"[ExperimentManager] Worker flush error: {e}")
+            finally:
+                self._save_queue.task_done()
+
+    def _execute_save_task(self, task: Dict[str, Any]) -> None:
+        """Execute artifact disk serialization and SQLite persistence."""
+        record: ExperimentRecord = task["record"]
+        raw_frames = task["raw_frames"]
+        raw_image: Optional[np.ndarray] = task["raw_image"]
+        overlaid_image: Optional[np.ndarray] = task["overlaid_image"]
+        telemetry: Optional[Dict[str, Any]] = task["telemetry"]
+        heatmap: Optional[np.ndarray] = task["heatmap"]
+
+        run_id = record.run_id
+        timestamp = record.timestamp
+        status = record.status
+
         run_dir = os.path.join(self.runs_dir, run_id)
         os.makedirs(run_dir, exist_ok=True)
         artifacts: List[ArtifactRecord] = []
@@ -273,7 +347,7 @@ class ExperimentManager:
         try:
             summary_payload = record.to_dict()
             summary_payload["frames_collected"] = record.frame_count
-            summary_payload["raw_frames"] = self.collected_frames
+            summary_payload["raw_frames"] = raw_frames
             with open(summary_path, "w", encoding="utf-8") as f:
                 json.dump(summary_payload, f, indent=2, cls=NumpyJSONEncoder)
             artifacts.append(ArtifactRecord(
@@ -283,14 +357,15 @@ class ExperimentManager:
                 created_at=timestamp,
             ))
         except Exception as e:
+            self.last_error = f"Failed to save summary.json: {e}"
             print(f"[ExperimentManager] Warning: Failed to save summary.json: {e}")
 
         # 2. Representative camera image
-        if self.latest_raw_image is not None:
+        if raw_image is not None and raw_image.size > 0:
             rep_path = os.path.join(run_dir, "representative.jpg")
             rel_rep_path = os.path.relpath(rep_path, self.project_root).replace("\\", "/")
             try:
-                cv2.imwrite(rep_path, self.latest_raw_image)
+                cv2.imwrite(rep_path, raw_image)
                 artifacts.append(ArtifactRecord(
                     run_id=run_id,
                     artifact_type="representative_image",
@@ -298,14 +373,15 @@ class ExperimentManager:
                     created_at=timestamp,
                 ))
             except Exception as e:
+                self.last_error = f"Failed to save representative.jpg: {e}"
                 print(f"[ExperimentManager] Warning: Failed to save representative.jpg: {e}")
 
         # 3. Overlaid multimodal image
-        if self.latest_overlaid_image is not None:
+        if overlaid_image is not None and overlaid_image.size > 0:
             overlay_path = os.path.join(run_dir, "overlay.jpg")
             rel_overlay_path = os.path.relpath(overlay_path, self.project_root).replace("\\", "/")
             try:
-                cv2.imwrite(overlay_path, self.latest_overlaid_image)
+                cv2.imwrite(overlay_path, overlaid_image)
                 artifacts.append(ArtifactRecord(
                     run_id=run_id,
                     artifact_type="overlay_image",
@@ -313,14 +389,15 @@ class ExperimentManager:
                     created_at=timestamp,
                 ))
             except Exception as e:
+                self.last_error = f"Failed to save overlay.jpg: {e}"
                 print(f"[ExperimentManager] Warning: Failed to save overlay.jpg: {e}")
 
         # 4. Telemetry JSON
-        if self.latest_telemetry is not None:
+        if telemetry is not None:
             telemetry_path = os.path.join(run_dir, "telemetry.json")
             rel_telemetry_path = os.path.relpath(telemetry_path, self.project_root).replace("\\", "/")
             try:
-                safe_tel = to_json_serializable(self.latest_telemetry)
+                safe_tel = to_json_serializable(telemetry)
                 with open(telemetry_path, "w", encoding="utf-8") as f:
                     json.dump(safe_tel, f, indent=2, cls=NumpyJSONEncoder)
                 artifacts.append(ArtifactRecord(
@@ -330,14 +407,15 @@ class ExperimentManager:
                     created_at=timestamp,
                 ))
             except Exception as e:
+                self.last_error = f"Failed to save telemetry.json: {e}"
                 print(f"[ExperimentManager] Warning: Failed to save telemetry.json: {e}")
 
         # 5. Acoustic Heatmap NPY
-        if self.latest_heatmap is not None:
+        if heatmap is not None and heatmap.size > 0:
             heatmap_path = os.path.join(run_dir, "heatmap.npy")
             rel_heatmap_path = os.path.relpath(heatmap_path, self.project_root).replace("\\", "/")
             try:
-                np.save(heatmap_path, self.latest_heatmap)
+                np.save(heatmap_path, heatmap)
                 artifacts.append(ArtifactRecord(
                     run_id=run_id,
                     artifact_type="heatmap",
@@ -345,6 +423,7 @@ class ExperimentManager:
                     created_at=timestamp,
                 ))
             except Exception as e:
+                self.last_error = f"Failed to save heatmap.npy: {e}"
                 print(f"[ExperimentManager] Warning: Failed to save heatmap.npy: {e}")
 
         # ----------------------------------------------------
@@ -358,5 +437,24 @@ class ExperimentManager:
             self.last_error = str(e)
             print(f"[ExperimentManager] ERROR inserting experiment into SQLite: {e}")
 
-        self.last_saved_experiment = record
-        return record
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """
+        Gracefully shut down background artifact saver, waiting for queued trials to flush.
+        """
+        if not self._worker_thread.is_alive():
+            return
+
+        print(f"[ExperimentManager] Waiting up to {timeout:.1f}s for pending artifact saves to flush...")
+        t0 = time.time()
+        # Wait for queue items to be marked task_done
+        while not self._save_queue.empty() and (time.time() - t0 < timeout):
+            time.sleep(0.05)
+
+        self._stop_event.set()
+        remaining_timeout = max(0.1, timeout - (time.time() - t0))
+        self._worker_thread.join(timeout=remaining_timeout)
+        if self._worker_thread.is_alive():
+            print("[ExperimentManager] Warning: Worker thread did not terminate within timeout.")
+        else:
+            print("[ExperimentManager] Background saver shutdown cleanly.")
+

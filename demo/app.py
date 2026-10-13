@@ -112,7 +112,8 @@ class ProfessorDemoApp:
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.current_mode = 1  # 1..10
-        self.notification_msg = "System Ready. Press 1-0 to switch modes, S for snapshot, R to record session."
+        self.profile_mode = "PRODUCTION"  # "PRODUCTION" (default) or "DIAGNOSTIC"
+        self.notification_msg = "System Ready [PRODUCTION]. Press [P] to toggle Profile, 1-0 for modes, [Y] for YOLO."
         self.notification_time = time.time()
 
         # Canvas layout geometry
@@ -216,6 +217,18 @@ class ProfessorDemoApp:
         self.notification_time = time.time()
         print(f"[App Notification] {text}")
 
+    def toggle_profile_mode(self) -> str:
+        """Toggle between PRODUCTION and DIAGNOSTIC execution profiles."""
+        if self.profile_mode == "PRODUCTION":
+            self.profile_mode = "DIAGNOSTIC"
+            self.runner.set_diagnostics_enabled(True)
+        else:
+            self.profile_mode = "PRODUCTION"
+            # In production, diagnostics run only if currently in Mode 7
+            self.runner.set_diagnostics_enabled(self.current_mode == 7)
+        self.set_notification(f"Profile switched to [{self.profile_mode} MODE]")
+        return self.profile_mode
+
     def on_mouse(self, event: int, x: int, y: int, flags: int, param: Any) -> None:
         """Handle mouse clicks on navigation tabs and interactive panels."""
         if event != cv2.EVENT_LBUTTONDOWN:
@@ -229,6 +242,11 @@ class ProfessorDemoApp:
             if x < 0 or x >= CANVAS_WIDTH or y < 0 or y >= CANVAS_HEIGHT:
                 return  # Clicked inside letterbox padding
 
+        # Check Profile Toggle button in header (x in [1040, 1205], y in [4, 30])
+        if 1040 <= x <= 1205 and 4 <= y <= 30:
+            self.toggle_profile_mode()
+            return
+
         # Check navigation tabs (Header row 2: y in [34, 62])
         if self.tab_y <= y <= self.tab_y + self.tab_h:
             for i in range(10):
@@ -237,6 +255,11 @@ class ProfessorDemoApp:
                     new_mode = 10 if i == 9 else i + 1
                     if new_mode != self.current_mode:
                         self.current_mode = new_mode
+                        # Update runner diagnostics if in Mode 7 or DIAGNOSTIC profile
+                        if self.profile_mode == "DIAGNOSTIC" or self.current_mode == 7:
+                            self.runner.set_diagnostics_enabled(True)
+                        else:
+                            self.runner.set_diagnostics_enabled(False)
                         self.set_notification(f"Switched to Mode {self.current_mode}: {TAB_LABELS[i]}")
                     return
 
@@ -303,6 +326,16 @@ class ProfessorDemoApp:
             AA,
         )
 
+        # Profile Toggle Button (PRODUCTION / DIAGNOSTIC) [P]
+        diag_active = (self.profile_mode == "DIAGNOSTIC")
+        p_bg = (38, 28, 65) if diag_active else (25, 45, 30)
+        p_border = ACCENT_AMBER if diag_active else ACCENT_GREEN
+        p_text_col = ACCENT_AMBER if diag_active else ACCENT_GREEN
+        p_text = "[P] DIAGNOSTIC" if diag_active else "[P] PRODUCTION"
+        cv2.rectangle(canvas, (1040, 4), (1205, 28), p_bg, -1)
+        cv2.rectangle(canvas, (1040, 4), (1205, 28), p_border, 1)
+        cv2.putText(canvas, p_text, (1050, 20), FONT_HEADER, 0.44, p_text_col, 1, AA)
+
         # Hardware & loop status indicators (top-right)
         status_text = "SIMULATION" if self.simulate else ("ONLINE" if telemetry.get("camera_connected") else "HARDWARE PENDING")
         draw_badge(canvas, 1220, 5, status_text, status_ok=(not self.simulate and telemetry.get("camera_connected", False)))
@@ -343,7 +376,7 @@ class ProfessorDemoApp:
         cv2.line(canvas, (0, fy), (CANVAS_WIDTH, fy), BORDER, 1)
 
         # Hotkeys guide (left)
-        guide = "[1-0]: Modes  |  [Y]: YOLO ON/OFF  |  [S]: Snapshot  |  [E]: Export  |  [R]: Rec  |  [C]: Clear GT  |  [Q]: Quit"
+        guide = "[1-0]: Modes | [P]: Profile | [Y]: YOLO ON/OFF | [S]: Snap | [E]: Export | [R]: Rec | [C]: Clear GT | [Q]: Quit"
         cv2.putText(canvas, guide, (16, fy + 27), FONT_BODY, 0.44, TEXT_SECONDARY, 1, AA)
 
         # Dynamic notification message (right)
@@ -351,7 +384,7 @@ class ProfessorDemoApp:
             cv2.putText(
                 canvas,
                 self.notification_msg,
-                (710, fy + 27),
+                (730, fy + 27),
                 FONT_BODY,
                 0.46,
                 ACCENT_CYAN,
@@ -362,6 +395,9 @@ class ProfessorDemoApp:
     def compose_frame(self, telemetry: dict) -> np.ndarray:
         """Compose the complete 1600x900 GUI canvas for the current active mode."""
         canvas = np.full((CANVAS_HEIGHT, CANVAS_WIDTH, 3), BG_CANVAS, dtype=np.uint8)
+
+        # Ensure profile_mode is populated in telemetry for sidebar / badges
+        telemetry["profile_mode"] = self.profile_mode
 
         # 1. Render top header
         self._render_header(canvas, telemetry)
@@ -517,11 +553,21 @@ class ProfessorDemoApp:
                     if key in [ord('q'), ord('Q'), 27]:  # 27 = ESC
                         print("[App] Quit key pressed. Exiting...")
                         break
+                    elif key in [ord('p'), ord('P')]:
+                        self.toggle_profile_mode()
                     elif key in [ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6'), ord('7'), ord('8'), ord('9')]:
                         self.current_mode = key - ord('0')
+                        if self.profile_mode == "DIAGNOSTIC" or self.current_mode == 7:
+                            self.runner.set_diagnostics_enabled(True)
+                        else:
+                            self.runner.set_diagnostics_enabled(False)
                         self.set_notification(f"Switched to Mode {self.current_mode}: {TAB_LABELS[self.current_mode - 1]}")
                     elif key == ord('0'):
                         self.current_mode = 10
+                        if self.profile_mode == "DIAGNOSTIC":
+                            self.runner.set_diagnostics_enabled(True)
+                        else:
+                            self.runner.set_diagnostics_enabled(False)
                         self.set_notification("Switched to Mode 10: [0] ROADMAP")
                     elif key in [ord('s'), ord('S')]:
                         try:
@@ -559,7 +605,11 @@ class ProfessorDemoApp:
         except KeyboardInterrupt:
             print("\n[App] Interrupted by user.")
         finally:
-            print("[App] Shutting down runner and releasing devices...")
+            print("[App] Shutting down background workers and releasing devices...")
+            try:
+                self.experiment_manager.shutdown(timeout=5.0)
+            except Exception as e:
+                print(f"[App] Failed during experiment manager shutdown: {e}")
             try:
                 self.repo.end_session(self.session_id)
             except Exception as e:

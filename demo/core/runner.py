@@ -71,6 +71,7 @@ class DemoPipelineRunner:
         self.music_running = False
         self.yolo_running = False
         self.yolo_enabled = True
+        self.diagnostics_enabled = False
         self.is_synchronized = False
 
         # Simulation assets if simulate=True
@@ -262,8 +263,8 @@ class DemoPipelineRunner:
             except Exception as e:
                 pass
 
-        # Calculate live audio diagnostics
-        if raw_audio_data is not None:
+        # Calculate live audio diagnostics only when enabled (Diagnostic profile or Mode 7)
+        if raw_audio_data is not None and self.diagnostics_enabled:
             telemetry["mic_rms"] = self.diagnostics.compute_mic_rms(raw_audio_data)
             telemetry["band_energies"] = self.diagnostics.compute_band_energies(raw_audio_data)
 
@@ -445,12 +446,17 @@ class DemoPipelineRunner:
         telemetry["music_running"] = self.music_running
         telemetry["yolo_running"] = self.yolo_running and self.yolo_enabled
         telemetry["yolo_enabled"] = self.yolo_enabled
+        telemetry["diagnostics_enabled"] = self.diagnostics_enabled
         self.latest_telemetry = telemetry
 
         # Record frame if active session
         self.logger.record_frame(telemetry)
 
         return telemetry
+
+    def set_diagnostics_enabled(self, enabled: bool) -> None:
+        """Enable or disable optional live audio diagnostic computations."""
+        self.diagnostics_enabled = bool(enabled)
 
     def toggle_yolo(self) -> bool:
         """Toggle YOLO inference ON/OFF without stopping camera, audio, or MUSIC."""

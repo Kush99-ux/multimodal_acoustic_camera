@@ -8,6 +8,7 @@ Engineered for high readability and crisp typography on a 1600x900 display.
 """
 
 from __future__ import annotations
+import time
 from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
@@ -46,6 +47,12 @@ class ValidationPanel:
             migrate_historical_records(self.repository)
         else:
             self.repository = repository
+
+        # Query cache to throttle SQLite disk I/O
+        self._cached_recent_experiments: List[ExperimentRecord] = []
+        self._cached_stats: DatabaseStats = DatabaseStats()
+        self._last_query_time: float = 0.0
+        self._cache_interval_sec: float = 1.0
 
     def render(self, canvas: np.ndarray, telemetry: Dict[str, Any]) -> None:
         """Render the scientific validation benchmarks and experimental runs."""
@@ -90,15 +97,19 @@ class ValidationPanel:
         t_h = 434
         draw_card(canvas, x + 20, t_y, w - 40, t_h)
 
-        # Query dynamic records and statistics from SQLite
-        recent_experiments: List[ExperimentRecord] = []
-        stats = DatabaseStats()
+        # Query dynamic records and statistics from SQLite with 1.0s caching
+        now = time.time()
         if self.repository is not None:
-            try:
-                recent_experiments = self.repository.get_recent_experiments(limit=11)
-                stats = self.repository.get_database_stats()
-            except Exception as e:
-                print(f"[ValidationPanel] Database query error: {e}")
+            if (now - self._last_query_time) >= self._cache_interval_sec or not self._cached_recent_experiments:
+                try:
+                    self._cached_recent_experiments = self.repository.get_recent_experiments(limit=11)
+                    self._cached_stats = self.repository.get_database_stats()
+                    self._last_query_time = now
+                except Exception as e:
+                    print(f"[ValidationPanel] Database query error: {e}")
+
+        recent_experiments = self._cached_recent_experiments
+        stats = self._cached_stats
 
         # Section header with live database aggregate counts
         draw_section(canvas, "Recent Validation Trials & Historical Campaigns", x + 34, t_y + 24, TEXT_ACCENT, thickness=2)

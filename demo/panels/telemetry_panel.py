@@ -52,11 +52,14 @@ class TelemetrySidebar:
         draw_section(canvas, "Hardware & Pipeline Status", x + 16, curr_y, TEXT_ACCENT, thickness=2)
         curr_y += 12
 
-        # Row 1 of badges: Camera & Audio
+        # Row 1 of badges: Profile Mode, Camera & Audio
+        diag_on = telemetry.get("profile_mode") == "DIAGNOSTIC" or telemetry.get("diagnostics_enabled", False)
+        profile_label = "DIAGNOSTIC" if diag_on else "PRODUCTION"
+        bw0 = draw_badge(canvas, x + 16, curr_y, profile_label, status_ok=not diag_on, warning=diag_on)
         cam_ok = telemetry.get("camera_connected", False)
         aud_ok = telemetry.get("audio_connected", False)
-        bw1 = draw_badge(canvas, x + 16, curr_y, "ESP32-CAM", status_ok=cam_ok)
-        draw_badge(canvas, x + 24 + bw1, curr_y, "UMA-16 (16ch)", status_ok=aud_ok)
+        bw1 = draw_badge(canvas, x + 24 + bw0, curr_y, "ESP32-CAM", status_ok=cam_ok)
+        draw_badge(canvas, x + 32 + bw0 + bw1, curr_y, "UMA-16 (16ch)", status_ok=aud_ok)
         curr_y += 30
 
         # Row 2 of badges: MUSIC, YOLO, Sync
