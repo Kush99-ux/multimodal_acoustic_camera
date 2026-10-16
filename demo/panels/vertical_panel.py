@@ -17,8 +17,9 @@ import numpy as np
 
 from demo.ui.theme import (
     FONT_BODY, FONT_HEADER, AA, BG_CARD, BG_PANEL, BORDER,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT,
-    ACCENT_CYAN, ACCENT_GREEN, ACCENT_AMBER, ACCENT_ORANGE
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT, TEXT_ON_DARK,
+    TEXT_SUCCESS, TEXT_WARNING,
+    ACCENT_UI, ACCENT_GREEN
 )
 from demo.ui.widgets import draw_panel, draw_card, draw_metric_row, draw_bar, draw_section, Button
 
@@ -46,15 +47,12 @@ class VerticalTestPanel:
         self.positions = ["ABOVE", "LEVEL", "BELOW"]
         self.selected_pos = "LEVEL"
 
-        # Interactive buttons with clean 32px height
-        self.btn_above = Button("pos_above", "[1] ABOVE", x + 30, y + 46, 110, 32)
-        self.btn_level = Button("pos_level", "[2] LEVEL", x + 150, y + 46, 110, 32)
-        self.btn_below = Button("pos_below", "[3] BELOW", x + 270, y + 46, 110, 32)
+        self.btn_above = Button("pos_above", "ABOVE", x + 30, y + 46, 110, 32)
+        self.btn_level = Button("pos_level", "LEVEL", x + 150, y + 46, 110, 32)
+        self.btn_below = Button("pos_below", "BELOW", x + 270, y + 46, 110, 32)
         self.btn_start = Button("start_test", "START 20-FRAME TEST", x + 400, y + 46, 220, 32, color=ACCENT_GREEN)
 
-        self._update_tab_states()
-
-        # Test state
+        # Test state (runtime state initialized once in __init__)
         self.test_running = False
         self.test_target_frames = 20
         self.collected_az: List[float] = []
@@ -65,12 +63,31 @@ class VerticalTestPanel:
             "BELOW": None,
         }
 
-        # Historical references from report validation
+        # Historical references from report validation (static, initialized once)
         self.historical_ref = {
             "ABOVE": {"median_el": 12.25, "median_az": 90.5, "desc": "Phone raised +25cm"},
             "LEVEL": {"median_el": -6.00, "median_az": 90.75, "desc": "Visually level with lens (array pitched -6 deg)"},
             "BELOW": {"median_el": -17.00, "median_az": 90.0, "desc": "Phone lowered -25cm"},
         }
+
+        self.set_layout(x, y, w, h)
+        self._update_tab_states()
+
+    def set_layout(self, x: int, y: int, w: int, h: int) -> None:
+        """Update panel dimensions and button coordinates (geometry only)."""
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+
+        self.btn_above.x = x + 30
+        self.btn_above.y = y + 46
+        self.btn_level.x = x + 150
+        self.btn_level.y = y + 46
+        self.btn_below.x = x + 270
+        self.btn_below.y = y + 46
+        self.btn_start.x = x + 400
+        self.btn_start.y = y + 46
 
     def _update_tab_states(self) -> None:
         self.btn_above.active = (self.selected_pos == "ABOVE")
@@ -185,7 +202,7 @@ class VerticalTestPanel:
     def render(self, canvas: np.ndarray, telemetry: Dict[str, Any]) -> None:
         """Render the vertical guided test interface."""
         x, y, w, h = self.x, self.y, self.w, self.h
-        draw_panel(canvas, x, y, w, h, title="MODE 5: VERTICAL ELEVATION LOCALIZATION TEST")
+        draw_panel(canvas, x, y, w, h, title="Elevation Test")
 
         # Draw Tab Buttons
         self.btn_above.draw(canvas)
@@ -196,9 +213,9 @@ class VerticalTestPanel:
         if self.test_running:
             prog = len(self.collected_el) / float(self.test_target_frames)
             draw_card(canvas, x + 400, y + 46, 220, 32)
-            draw_bar(canvas, x + 402, y + 48, 216, 28, prog, color=ACCENT_ORANGE)
+            draw_bar(canvas, x + 402, y + 48, 216, 28, prog, color=ACCENT_UI)
             txt = f"RECORDING ({len(self.collected_el)}/{self.test_target_frames})"
-            cv2.putText(canvas, txt, (x + 418, y + 68), FONT_BODY, 0.44, (255, 255, 255), 1, AA)
+            cv2.putText(canvas, txt, (x + 418, y + 68), FONT_BODY, 0.44, TEXT_ON_DARK, 1, AA)
         else:
             self.btn_start.draw(canvas)
 
@@ -209,23 +226,24 @@ class VerticalTestPanel:
         draw_section(canvas, f"Target Position: {self.selected_pos}", x + 46, y + 120, TEXT_ACCENT, thickness=2)
 
         live_el = telemetry.get("elevation_deg")
-        live_el = -6.0 if live_el is None else live_el
-        draw_metric_row(canvas, x + 46, y + 148, "Current Live Elevation", f"{live_el:+.1f} deg", ACCENT_CYAN, width=w - 120, bold_value=True)
+        live_el_valid = bool(telemetry.get("peak_valid", False)) and live_el is not None
+        live_el_str = f"{live_el:+.1f} deg" if live_el_valid else "--"
+        draw_metric_row(canvas, x + 46, y + 148, "Current Live Elevation", live_el_str, ACCENT_UI if live_el_valid else TEXT_MUTED, width=w - 120, bold_value=live_el_valid)
 
         # Display Test Results for this position
         res = self.last_results[self.selected_pos]
         if res is not None:
             run_title = f"Latest Recorded Test: {res.get('run_id', 'RUN')} [{res.get('status', 'COMPLETED')}] (20 Frames)"
-            draw_section(canvas, run_title, x + 46, y + 178, ACCENT_GREEN if res.get('status') == 'PASS' else ACCENT_AMBER, thickness=2)
-            draw_metric_row(canvas, x + 46, y + 204, "Measured Median Elevation", f"{res['median_el']:+.2f} deg", ACCENT_GREEN, width=w - 120, bold_value=True)
+            draw_section(canvas, run_title, x + 46, y + 178, TEXT_SUCCESS if res.get('status') == 'PASS' else TEXT_WARNING, thickness=2)
+            draw_metric_row(canvas, x + 46, y + 204, "Measured Median Elevation", f"{res['median_el']:+.2f} deg", TEXT_SUCCESS, width=w - 120, bold_value=True)
             draw_metric_row(canvas, x + 46, y + 228, "Elevation Std Deviation", f"{res['std_el']:.2f} deg", TEXT_PRIMARY, width=w - 120)
             if res.get('pixel_error') is not None:
-                draw_metric_row(canvas, x + 46, y + 252, "Ground Truth Pixel Error", f"{res['pixel_error']:.1f} px", ACCENT_CYAN, width=w - 120, bold_value=True)
+                draw_metric_row(canvas, x + 46, y + 252, "Ground Truth Pixel Error", f"{res['pixel_error']:.1f} px", ACCENT_UI, width=w - 120, bold_value=True)
             elif "min_el" in res and "max_el" in res:
                 draw_metric_row(canvas, x + 46, y + 252, "Measured Range (Min -- Max)", f"{res['min_el']:+.1f} deg -- {res['max_el']:+.1f} deg", TEXT_SECONDARY, width=w - 120)
             else:
                 draw_metric_row(canvas, x + 46, y + 252, "Azimuth Context Median", f"{res['median_az']:.2f} deg", TEXT_MUTED, width=w - 120)
-            draw_metric_row(canvas, x + 46, y + 276, "Persistent Run ID / Status", f"{res.get('run_id', 'RUN')}  |  {res.get('status', 'SAVED')}", ACCENT_CYAN, width=w - 120, bold_value=True)
+            draw_metric_row(canvas, x + 46, y + 276, "Persistent Run ID / Status", f"{res.get('run_id', 'RUN')}  |  {res.get('status', 'SAVED')}", ACCENT_UI, width=w - 120, bold_value=True)
         else:
             cv2.putText(canvas, "No test run recorded yet for this position. Click [START 20-FRAME TEST] above.", (x + 46, y + 200), FONT_BODY, 0.46, TEXT_MUTED, 1, AA)
 
@@ -254,21 +272,21 @@ class VerticalTestPanel:
             if pos_res:
                 if pos == "ABOVE" and pos_res["median_el"] > 0.0:
                     status = "PASS (El > 0 deg)"
-                    status_col = ACCENT_GREEN
+                    status_col = TEXT_SUCCESS
                 elif pos == "LEVEL" and -10.0 <= pos_res["median_el"] <= 0.0:
                     status = "PASS (El ~ -6 deg)"
-                    status_col = ACCENT_GREEN
+                    status_col = TEXT_SUCCESS
                 elif pos == "BELOW" and pos_res["median_el"] < -10.0:
                     status = "PASS (El < -10 deg)"
-                    status_col = ACCENT_GREEN
+                    status_col = TEXT_SUCCESS
                 else:
                     status = "OBSERVED"
-                    status_col = ACCENT_AMBER
+                    status_col = TEXT_WARNING
 
-            cv2.putText(canvas, pos, (col_x[0], row_y), FONT_BODY, 0.48, ACCENT_CYAN if pos == self.selected_pos else TEXT_PRIMARY, 2 if pos == self.selected_pos else 1, AA)
+            cv2.putText(canvas, pos, (col_x[0], row_y), FONT_BODY, 0.48, ACCENT_UI if pos == self.selected_pos else TEXT_PRIMARY, 2 if pos == self.selected_pos else 1, AA)
             cv2.putText(canvas, f"{ref['median_el']:+.2f} deg", (col_x[1], row_y), FONT_BODY, 0.48, TEXT_SECONDARY, 1, AA)
             cv2.putText(canvas, f"{ref['median_az']:.1f} deg", (col_x[2], row_y), FONT_BODY, 0.46, TEXT_MUTED, 1, AA)
-            cv2.putText(canvas, live_str, (col_x[3], row_y), FONT_BODY, 0.48, ACCENT_GREEN if pos_res else TEXT_MUTED, 2 if pos_res else 1, AA)
+            cv2.putText(canvas, live_str, (col_x[3], row_y), FONT_BODY, 0.48, TEXT_SUCCESS if pos_res else TEXT_MUTED, 2 if pos_res else 1, AA)
             cv2.putText(canvas, status, (col_x[4], row_y), FONT_BODY, 0.48, status_col, 2 if "PASS" in status else 1, AA)
 
             row_y += 36

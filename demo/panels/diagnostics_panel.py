@@ -13,9 +13,9 @@ import cv2
 import numpy as np
 
 from demo.ui.theme import (
-    FONT_BODY, FONT_HEADER, AA, BG_CARD, BORDER,
+    FONT_BODY, FONT_HEADER, AA, BG_CARD, BG_VISUALIZATION, BORDER,
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT,
-    ACCENT_GREEN, ACCENT_AMBER, ACCENT_RED, ACCENT_CYAN, ACCENT_BLUE
+    ACCENT_GREEN, ACCENT_AMBER, ACCENT_RED, ACCENT_CYAN, ACCENT_UI
 )
 from demo.ui.widgets import draw_panel, draw_card, draw_metric_row, draw_bar, draw_section
 from demo.core.diagnostics import MIC_LAYOUT_GRID
@@ -25,6 +25,10 @@ class DiagnosticsPanel:
     """Renders Mode 7: Microphone Array & Sub-Band Spectral Diagnostics."""
 
     def __init__(self, x: int, y: int, w: int, h: int) -> None:
+        self.set_layout(x, y, w, h)
+
+    def set_layout(self, x: int, y: int, w: int, h: int) -> None:
+        """Update panel dimensions."""
         self.x = x
         self.y = y
         self.w = w
@@ -33,7 +37,7 @@ class DiagnosticsPanel:
     def render(self, canvas: np.ndarray, telemetry: Dict[str, Any]) -> None:
         """Render the 16-mic physical array and 6-band spectrum panels."""
         x, y, w, h = self.x, self.y, self.w, self.h
-        draw_panel(canvas, x, y, w, h, title="MODE 7: 16-MICROPHONE ARRAY & SUB-BAND SPECTRAL DIAGNOSTICS")
+        draw_panel(canvas, x, y, w, h, title="Array & FFT")
 
         mid_x = x + (w // 2) - 10
         left_w = mid_x - x - 20
@@ -43,10 +47,11 @@ class DiagnosticsPanel:
         # LEFT: 16-MICROPHONE PHYSICAL ARRAY ARRANGEMENT
         # ====================================================
         draw_card(canvas, x + 20, y + 42, left_w, h - 64)
-        draw_section(canvas, "UMA-16 Physical Microphone Arrangement", x + 36, y + 68, ACCENT_BLUE, thickness=2)
+        draw_section(canvas, "UMA-16 Physical Microphone Arrangement", x + 36, y + 68, ACCENT_UI, thickness=2)
         cv2.putText(canvas, "Physical layout (outward broadside facing +Y):", (x + 36, y + 88), FONT_BODY, 0.42, TEXT_SECONDARY, 1, AA)
 
-        mic_rms = telemetry.get("mic_rms", np.zeros(16, dtype=np.float32))
+        mic_rms = telemetry.get("mic_rms")
+        mic_available = mic_rms is not None and len(mic_rms) >= 16
 
         # Render 4x4 Grid
         grid_start_x = x + 36
@@ -60,30 +65,33 @@ class DiagnosticsPanel:
                 cy = grid_start_y + r_idx * cell_h
 
                 ch_idx = mic_num - 1
-                energy = float(mic_rms[ch_idx]) if ch_idx < len(mic_rms) else 0.0
+                energy = float(mic_rms[ch_idx]) if mic_available else None
 
                 # Determine card color based on activity
-                if energy > 0.65:
+                if energy is None:
+                    heat_col = BORDER
+                elif energy > 0.65:
                     heat_col = ACCENT_RED
                 elif energy > 0.35:
                     heat_col = ACCENT_AMBER
                 elif energy > 0.10:
                     heat_col = ACCENT_GREEN
                 else:
-                    heat_col = (60, 48, 40)
+                    heat_col = BORDER
 
-                cv2.rectangle(canvas, (cx + 3, cy + 3), (cx + cell_w - 6, cy + cell_h - 6), (28, 22, 18), -1)
-                cv2.rectangle(canvas, (cx + 3, cy + 3), (cx + cell_w - 6, cy + cell_h - 6), heat_col, 1)
+                draw_card(canvas, cx + 3, cy + 3, cell_w - 9, cell_h - 9, BG_CARD, heat_col)
 
                 cv2.putText(canvas, f"MIC {mic_num}", (cx + 10, cy + 24), FONT_HEADER, 0.46, TEXT_PRIMARY, 1, AA)
                 cv2.putText(canvas, f"Ch {ch_idx+1}", (cx + 10, cy + 42), FONT_BODY, 0.40, TEXT_MUTED, 1, AA)
 
-                # Activity bar inside cell
-                draw_bar(canvas, cx + 10, cy + 50, cell_w - 26, 8, energy, color=heat_col)
+                if energy is None:
+                    cv2.putText(canvas, "NO DATA", (cx + 10, cy + 62), FONT_BODY, 0.36, TEXT_MUTED, 1, AA)
+                else:
+                    draw_bar(canvas, cx + 10, cy + 50, cell_w - 26, 8, energy, color=heat_col)
 
         # Orientation labels
-        cv2.putText(canvas, "<-- Camera Left (MIC 4)", (x + 36, grid_start_y + 4 * cell_h + 22), FONT_HEADER, 0.44, ACCENT_CYAN, 1, AA)
-        cv2.putText(canvas, "Camera Right (MIC 13) -->", (x + left_w - 210, grid_start_y + 4 * cell_h + 22), FONT_HEADER, 0.44, ACCENT_CYAN, 1, AA)
+        cv2.putText(canvas, "<-- Camera Left (MIC 4)", (x + 36, grid_start_y + 4 * cell_h + 22), FONT_HEADER, 0.44, ACCENT_UI, 1, AA)
+        cv2.putText(canvas, "Camera Right (MIC 13) -->", (x + left_w - 210, grid_start_y + 4 * cell_h + 22), FONT_HEADER, 0.44, ACCENT_UI, 1, AA)
 
         # Device Specifications Footer
         spec_y = grid_start_y + 4 * cell_h + 44
@@ -97,7 +105,7 @@ class DiagnosticsPanel:
         # RIGHT: 6-BAND SPECTRAL ACTIVITY
         # ====================================================
         draw_card(canvas, mid_x + 10, y + 42, right_w, h - 64)
-        draw_section(canvas, "Current Sub-Band Spectral Activity", mid_x + 26, y + 68, ACCENT_CYAN, thickness=2)
+        draw_section(canvas, "FFT Band Energy", mid_x + 26, y + 68, ACCENT_UI, thickness=2)
         cv2.putText(canvas, "Actual FFT power integrated (+/-250 Hz) across discrete MUSIC bands:", (mid_x + 26, y + 88), FONT_BODY, 0.42, TEXT_SECONDARY, 1, AA)
 
         band_energies = telemetry.get("band_energies", [])
@@ -105,6 +113,9 @@ class DiagnosticsPanel:
         bar_start_y = y + 116
         bar_gap = 54
         bar_w = right_w - 180
+
+        if not band_energies:
+            cv2.putText(canvas, "Waiting for audio diagnostics", (mid_x + 26, bar_start_y + 26), FONT_BODY, 0.46, TEXT_MUTED, 1, AA)
 
         for b_idx, (fc, frac, db_val) in enumerate(band_energies):
             by = bar_start_y + b_idx * bar_gap

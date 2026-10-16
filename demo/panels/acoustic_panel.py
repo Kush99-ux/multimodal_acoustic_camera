@@ -11,11 +11,12 @@ import cv2
 import numpy as np
 
 from demo.ui.theme import (
-    FONT_BODY, FONT_HEADER, AA, BG_CARD, BORDER,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT,
-    ACCENT_CYAN, ACCENT_AMBER
+    FONT_BODY, FONT_HEADER, AA, BG_VISUALIZATION, BORDER,
+    TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT,
+    TEXT_SUCCESS,
+    ACCENT_UI, ACCENT_AMBER
 )
-from demo.ui.widgets import draw_panel, draw_card
+from demo.ui.widgets import draw_panel, draw_measurement_card, draw_note
 
 
 class AcousticPanel:
@@ -27,11 +28,12 @@ class AcousticPanel:
         self.w = w
         self.h = h
 
-        # Heatmap viewport coordinates
-        self.plot_x = self.x + 84
-        self.plot_y = self.y + 60
-        self.plot_w = self.w - 148
-        self.plot_h = self.h - 180
+    def set_layout(self, x: int, y: int, w: int, h: int) -> None:
+        """Update panel position and dimensions (geometry only)."""
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
 
     def render(
         self,
@@ -41,30 +43,34 @@ class AcousticPanel:
     ) -> None:
         """Render the 2D MUSIC spatial spectrum and angular axes."""
         x, y, w, h = self.x, self.y, self.w, self.h
-        draw_panel(canvas, x, y, w, h, title="MODE 2: 2D MUSIC SPATIAL SPECTRUM (7,676 ANGULAR POINTS)")
+        draw_panel(canvas, x, y, w, h, title="2D MUSIC Spatial Spectrum")
 
         az = telemetry.get("azimuth_deg")
-        az = 90.0 if az is None else az
         el = telemetry.get("elevation_deg")
-        el = -6.0 if el is None else el
         peak_db = telemetry.get("peak_db")
-        peak_db = 0.0 if peak_db is None else peak_db
-        valid = telemetry.get("peak_valid", False)
+        valid = bool(telemetry.get("peak_valid", False))
 
-        # Top summary card
-        draw_card(canvas, x + 20, y + 36, w - 40, 42)
-        info_str = (
-            f"Azimuth: {az:+.1f} deg  |  Elevation: {el:+.1f} deg  |  "
-            f"Peak: {peak_db:.1f} dB SPL  |  Search Grid: 101 x 76 (7,676 points)  |  "
-            f"Bands: 500--3000 Hz"
+        draw_note(canvas, "Normalized spatial power | 101 x 76 angular grid | 500-3000 Hz bands", x + 20, y + 51, TEXT_SECONDARY)
+        card_gap = 12
+        card_w = (w - 40 - 2 * card_gap) // 3
+        card_y = y + 62
+        angle_color = TEXT_SUCCESS if valid else TEXT_MUTED
+        peak_color = TEXT_SUCCESS if valid else TEXT_MUTED
+        values = (
+            ("AZIMUTH", f"{az:+.1f} deg" if valid and az is not None else "—", angle_color),
+            ("ELEVATION", f"{el:+.1f} deg" if valid and el is not None else "—", angle_color),
+            ("PEAK LEVEL", f"{peak_db:.1f} dB SPL" if valid and peak_db is not None else "—", peak_color),
         )
-        cv2.putText(canvas, info_str, (x + 36, y + 63), FONT_BODY, 0.48, ACCENT_CYAN, 1, AA)
+        for index, (label, value, color) in enumerate(values):
+            draw_measurement_card(canvas, x + 20 + index * (card_w + card_gap), card_y, card_w, 56, label, value, color)
 
-        # Heatmap viewport geometry
-        px = x + 95
-        py = y + 112
-        pw = 780
-        ph = 580
+        # Keep the chart title above the plot and reserve space for tick labels
+        # and the color scale at every panel size.
+        px = x + min(110, max(82, int(w * 0.06)))
+        py = y + 154
+        right_margin = min(180, max(130, int(w * 0.10)))
+        pw = max(100, w - (px - x) - right_margin)
+        ph = max(80, h - (py - y) - 72)
 
         if heatmap_2d is not None and heatmap_2d.size > 0:
             h_oriented = np.flipud(heatmap_2d)
@@ -94,7 +100,7 @@ class AcousticPanel:
                 AA,
             )
         else:
-            cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (20, 16, 14), -1)
+            cv2.rectangle(canvas, (px, py), (px + pw, py + ph), BG_VISUALIZATION, -1)
             cv2.putText(
                 canvas,
                 "[!] NO ACOUSTIC SPECTRUM COMPUTED (WAITING FOR AUDIO FRAME)",

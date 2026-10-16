@@ -17,8 +17,9 @@ import numpy as np
 
 from demo.ui.theme import (
     FONT_BODY, FONT_HEADER, AA, BG_CARD, BG_PANEL, BORDER,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT,
-    ACCENT_CYAN, ACCENT_GREEN, ACCENT_AMBER, ACCENT_ORANGE
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT, TEXT_ON_DARK,
+    TEXT_SUCCESS, TEXT_WARNING,
+    ACCENT_UI, ACCENT_GREEN
 )
 from demo.ui.widgets import draw_panel, draw_card, draw_metric_row, draw_bar, draw_section, Button
 
@@ -46,15 +47,12 @@ class HorizontalTestPanel:
         self.positions = ["LEFT", "CENTER", "RIGHT"]
         self.selected_pos = "LEFT"
 
-        # Interactive buttons with clean 32px height
-        self.btn_left = Button("pos_left", "[1] LEFT", x + 30, y + 46, 110, 32)
-        self.btn_center = Button("pos_center", "[2] CENTER", x + 150, y + 46, 110, 32)
-        self.btn_right = Button("pos_right", "[3] RIGHT", x + 270, y + 46, 110, 32)
+        self.btn_left = Button("pos_left", "LEFT", x + 30, y + 46, 110, 32)
+        self.btn_center = Button("pos_center", "CENTER", x + 150, y + 46, 110, 32)
+        self.btn_right = Button("pos_right", "RIGHT", x + 270, y + 46, 110, 32)
         self.btn_start = Button("start_test", "START 20-FRAME TEST", x + 400, y + 46, 220, 32, color=ACCENT_GREEN)
 
-        self._update_tab_states()
-
-        # Test state
+        # Test state (runtime state initialized once in __init__)
         self.test_running = False
         self.test_target_frames = 20
         self.collected_az: List[float] = []
@@ -65,14 +63,14 @@ class HorizontalTestPanel:
             "RIGHT": None,
         }
 
-        # Historical references from report validation
+        # Historical references from report validation (static, initialized once)
         self.historical_ref = {
             "LEFT": {"median_az": 106.0, "range_az": "105.0--106.5 deg", "u_median": 115.0},
             "CENTER": {"median_az": 90.75, "range_az": "89.5--92.5 deg", "u_median": 310.0},
             "RIGHT": {"median_az": 65.0, "range_az": "64.0--66.5 deg", "u_median": 639.0},
         }
 
-        # Preload recent completed trials from database if repository is available
+        # Preload recent completed trials from database if repository is available (once, at startup)
         if self.experiment_manager is not None and getattr(self.experiment_manager, "repo", None) is not None:
             try:
                 exps = self.experiment_manager.repo.get_recent_experiments(limit=50)
@@ -93,6 +91,25 @@ class HorizontalTestPanel:
                         }
             except Exception as e:
                 print(f"[HorizontalTest] Could not preload recent experiments: {e}")
+
+        self.set_layout(x, y, w, h)
+        self._update_tab_states()
+
+    def set_layout(self, x: int, y: int, w: int, h: int) -> None:
+        """Update panel dimensions and button coordinates (geometry only)."""
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+
+        self.btn_left.x = x + 30
+        self.btn_left.y = y + 46
+        self.btn_center.x = x + 150
+        self.btn_center.y = y + 46
+        self.btn_right.x = x + 270
+        self.btn_right.y = y + 46
+        self.btn_start.x = x + 400
+        self.btn_start.y = y + 46
 
     def _update_tab_states(self) -> None:
         self.btn_left.active = (self.selected_pos == "LEFT")
@@ -227,7 +244,7 @@ class HorizontalTestPanel:
     def render(self, canvas: np.ndarray, telemetry: Dict[str, Any]) -> None:
         """Render the horizontal guided test interface."""
         x, y, w, h = self.x, self.y, self.w, self.h
-        draw_panel(canvas, x, y, w, h, title="MODE 4: HORIZONTAL LOCALIZATION VALIDATION TEST")
+        draw_panel(canvas, x, y, w, h, title="Azimuth Test")
 
         # Draw Tab Buttons
         self.btn_left.draw(canvas)
@@ -244,9 +261,9 @@ class HorizontalTestPanel:
                 prog = min(1.0, cur_frames / float(target_frames)) if target_frames > 0 else 0.0
 
             draw_card(canvas, x + 400, y + 46, 220, 32)
-            draw_bar(canvas, x + 402, y + 48, 216, 28, prog, color=ACCENT_ORANGE)
+            draw_bar(canvas, x + 402, y + 48, 216, 28, prog, color=ACCENT_UI)
             txt = f"RECORDING ({cur_frames}/{target_frames})"
-            cv2.putText(canvas, txt, (x + 418, y + 68), FONT_BODY, 0.44, (255, 255, 255), 1, AA)
+            cv2.putText(canvas, txt, (x + 418, y + 68), FONT_BODY, 0.44, TEXT_ON_DARK, 1, AA)
         else:
             self.btn_start.draw(canvas)
 
@@ -257,23 +274,24 @@ class HorizontalTestPanel:
         draw_section(canvas, f"Target Position: {self.selected_pos}", x + 46, y + 120, TEXT_ACCENT, thickness=2)
 
         live_az = telemetry.get("azimuth_deg")
-        live_az = 90.0 if live_az is None else live_az
-        draw_metric_row(canvas, x + 46, y + 148, "Current Live Azimuth", f"{live_az:.1f} deg", ACCENT_CYAN, width=w - 120, bold_value=True)
+        live_az_valid = bool(telemetry.get("peak_valid", False)) and live_az is not None
+        live_az_str = f"{live_az:.1f} deg" if live_az_valid else "--"
+        draw_metric_row(canvas, x + 46, y + 148, "Current Live Azimuth", live_az_str, ACCENT_UI if live_az_valid else TEXT_MUTED, width=w - 120, bold_value=live_az_valid)
 
         # Display Test Results for this position
         res = self.last_results[self.selected_pos]
         if res is not None:
             run_title = f"Latest Recorded Test: {res.get('run_id', 'RUN')} [{res.get('status', 'COMPLETED')}] (20 Frames)"
-            draw_section(canvas, run_title, x + 46, y + 178, ACCENT_GREEN if res.get('status') == 'PASS' else ACCENT_AMBER, thickness=2)
-            draw_metric_row(canvas, x + 46, y + 204, "Measured Median Azimuth", f"{res['median_az']:.2f} deg", ACCENT_GREEN, width=w - 120, bold_value=True)
+            draw_section(canvas, run_title, x + 46, y + 178, TEXT_SUCCESS if res.get('status') == 'PASS' else TEXT_WARNING, thickness=2)
+            draw_metric_row(canvas, x + 46, y + 204, "Measured Median Azimuth", f"{res['median_az']:.2f} deg", TEXT_SUCCESS, width=w - 120, bold_value=True)
             draw_metric_row(canvas, x + 46, y + 228, "Azimuth Std Deviation", f"{res['std_az']:.2f} deg", TEXT_PRIMARY, width=w - 120)
             if res.get('pixel_error') is not None:
-                draw_metric_row(canvas, x + 46, y + 252, "Ground Truth Pixel Error", f"{res['pixel_error']:.1f} px", ACCENT_CYAN, width=w - 120, bold_value=True)
+                draw_metric_row(canvas, x + 46, y + 252, "Ground Truth Pixel Error", f"{res['pixel_error']:.1f} px", ACCENT_UI, width=w - 120, bold_value=True)
             elif "min_az" in res and "max_az" in res:
                 draw_metric_row(canvas, x + 46, y + 252, "Measured Range (Min -- Max)", f"{res['min_az']:.1f} deg -- {res['max_az']:.1f} deg", TEXT_SECONDARY, width=w - 120)
             else:
                 draw_metric_row(canvas, x + 46, y + 252, "Elevation Context Median", f"{res['median_el']:.2f} deg", TEXT_MUTED, width=w - 120)
-            draw_metric_row(canvas, x + 46, y + 276, "Persistent Run ID / Status", f"{res.get('run_id', 'RUN')}  |  {res.get('status', 'SAVED')}", ACCENT_CYAN, width=w - 120, bold_value=True)
+            draw_metric_row(canvas, x + 46, y + 276, "Persistent Run ID / Status", f"{res.get('run_id', 'RUN')}  |  {res.get('status', 'SAVED')}", ACCENT_UI, width=w - 120, bold_value=True)
         else:
             cv2.putText(canvas, "No test run recorded yet for this position. Click [START 20-FRAME TEST] above.", (x + 46, y + 200), FONT_BODY, 0.46, TEXT_MUTED, 1, AA)
 
@@ -302,21 +320,21 @@ class HorizontalTestPanel:
             if pos_res:
                 if pos == "LEFT" and pos_res["median_az"] > 95.0:
                     status = "PASS (Az > 90 deg)"
-                    status_col = ACCENT_GREEN
+                    status_col = TEXT_SUCCESS
                 elif pos == "CENTER" and 85.0 <= pos_res["median_az"] <= 95.0:
                     status = "PASS (Az ~ 90 deg)"
-                    status_col = ACCENT_GREEN
+                    status_col = TEXT_SUCCESS
                 elif pos == "RIGHT" and pos_res["median_az"] < 85.0:
                     status = "PASS (Az < 90 deg)"
-                    status_col = ACCENT_GREEN
+                    status_col = TEXT_SUCCESS
                 else:
                     status = "OBSERVED"
-                    status_col = ACCENT_AMBER
+                    status_col = TEXT_WARNING
 
-            cv2.putText(canvas, pos, (col_x[0], row_y), FONT_BODY, 0.48, ACCENT_CYAN if pos == self.selected_pos else TEXT_PRIMARY, 2 if pos == self.selected_pos else 1, AA)
+            cv2.putText(canvas, pos, (col_x[0], row_y), FONT_BODY, 0.48, ACCENT_UI if pos == self.selected_pos else TEXT_PRIMARY, 2 if pos == self.selected_pos else 1, AA)
             cv2.putText(canvas, f"{ref['median_az']:.1f} deg", (col_x[1], row_y), FONT_BODY, 0.48, TEXT_SECONDARY, 1, AA)
             cv2.putText(canvas, ref['range_az'], (col_x[2], row_y), FONT_BODY, 0.46, TEXT_MUTED, 1, AA)
-            cv2.putText(canvas, live_str, (col_x[3], row_y), FONT_BODY, 0.48, ACCENT_GREEN if pos_res else TEXT_MUTED, 2 if pos_res else 1, AA)
+            cv2.putText(canvas, live_str, (col_x[3], row_y), FONT_BODY, 0.48, TEXT_SUCCESS if pos_res else TEXT_MUTED, 2 if pos_res else 1, AA)
             cv2.putText(canvas, status, (col_x[4], row_y), FONT_BODY, 0.48, status_col, 2 if "PASS" in status else 1, AA)
 
             row_y += 36

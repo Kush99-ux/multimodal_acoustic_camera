@@ -9,8 +9,8 @@ or for offline demonstration:
     python demo/app.py --simulate
 
 Features:
-- Full 1600x900 Academic Dark UI presentation dashboard
-- 10 Interactive Modes:
+- Full 1600x900 Ivory & Navy scientific dashboard
+- 8 Interactive Modes:
     1: Live Multimodal Acoustic-Vision Fusion with Ground Truth Target click
     2: 2D MUSIC Spatial Spectrum (7,676 points, 101x76 grid)
     3: YOLO11n-seg Instance Segmentation & Confidence Tracking
@@ -19,9 +19,7 @@ Features:
     6: Cross-Modal Timestamp Synchronization & Hardware Jitter Monitor
     7: 16-Microphone Physical Array Layout & 6 Sub-Band Spectral Power Meters
     8: Scientific Validation Benchmark Tables & Historical Verification Runs
-    9: Multimodal System Architecture Flow Diagram
-   10: Current Empirical Limitations & Research Roadmap
-- Persistent live telemetry and status sidebar
+- Destination-specific live measurements and status details
 - Snapshot capture [S] and continuous session telemetry recording [R]
 """
 
@@ -56,7 +54,6 @@ from demo.core.runner import DemoPipelineRunner
 from demo.data import ExperimentDatabase, ExperimentRepository, migrate_historical_records
 from demo.core.experiment_manager import ExperimentManager
 from demo.panels import (
-    TelemetrySidebar,
     MultimodalPanel,
     AcousticPanel,
     VisionPanel,
@@ -65,32 +62,53 @@ from demo.panels import (
     SynchronizationPanel,
     DiagnosticsPanel,
     ValidationPanel,
-    ArchitecturePanel,
-    RoadmapPanel,
 )
 from demo.ui.theme import (
-    CANVAS_WIDTH, CANVAS_HEIGHT, HEADER_HEIGHT, FOOTER_HEIGHT,
-    FONT, FONT_TITLE, FONT_HEADER, FONT_BODY, AA,
-    SCALE_TITLE, SCALE_SUBTITLE, SCALE_TAB,
-    BG_CANVAS, BG_PANEL, BG_CARD, BG_HOVER, BORDER, BORDER_ACTIVE,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_ACCENT,
-    ACCENT_CYAN, ACCENT_GREEN, ACCENT_AMBER, ACCENT_RED, ACCENT_BLUE, ACCENT_ORANGE
+    CANVAS_WIDTH, CANVAS_HEIGHT, FOOTER_HEIGHT,
+    FONT_BODY, AA, SPACE_MD, RADIUS_BUTTON,
+    BG_CANVAS, BG_PANEL, TEXT_SECONDARY, ACCENT_GREEN, ACCENT_AMBER, ACCENT_RED
 )
-from demo.ui.widgets import draw_card, draw_badge
+from demo.ui.widgets import draw_app_title, draw_button, draw_divider, draw_status_chip, rounded_rect_contains
 
 
-TAB_LABELS = [
-    "[1] Live Fusion",
-    "[2] 2D MUSIC",
-    "[3] YOLO Vision",
-    "[4] Azimuth Test",
-    "[5] Elevation Test",
-    "[6] Sync Monitor",
-    "[7] Array & FFT",
-    "[8] Benchmarks",
-    "[9] Architecture",
-    "[0] Roadmap",
-]
+MODE_LABELS = {
+    1: "Live Fusion",
+    2: "2D MUSIC",
+    3: "YOLO Vision",
+    4: "Azimuth Test",
+    5: "Elevation Test",
+    6: "Sync Monitor",
+    7: "Array & FFT",
+    8: "Benchmarks",
+}
+NAV_ITEMS = (
+    ("Live Fusion", 1),
+    ("Acoustics", 2),
+    ("Vision", 3),
+    ("Sync", 6),
+    ("Tests", 8),
+)
+ACOUSTIC_MODE_ITEMS = (
+    (2, "MUSIC"),
+    (4, "Azimuth"),
+    (5, "Elevation"),
+    (7, "Array/FFT"),
+)
+ACOUSTIC_MODES = tuple(mode for mode, _ in ACOUSTIC_MODE_ITEMS)
+NAV_MARGIN = 16
+NAV_GAP = 12
+NAV_Y = 36
+NAV_HEIGHT = 28
+SUBNAV_Y = 68
+SUBNAV_HEIGHT = 22
+SUBNAV_GAP = 6
+SUBNAV_RADIUS = 8
+CONTENT_TOP = 68
+CONTENT_TOP_WITH_SUBNAV = 96
+PROFILE_BUTTON = (1010, 5, 160, 26)
+YOLO_BUTTON = (1182, 5, 142, 26)
+FPS_CHIP = (1340, 6)
+RECORDING_CHIP = (1445, 6)
 
 
 class ProfessorDemoApp:
@@ -111,28 +129,25 @@ class ProfessorDemoApp:
         self.audio_device = audio_device
         os.makedirs(self.output_dir, exist_ok=True)
 
-        self.current_mode = 1  # 1..10
+        self.current_mode = 1  # 1..8
         self.profile_mode = "PRODUCTION"  # "PRODUCTION" (default) or "DIAGNOSTIC"
-        self.notification_msg = "System Ready [PRODUCTION]. Press [P] to toggle Profile, 1-0 for modes, [Y] for YOLO."
-        self.notification_time = time.time()
-
         # Canvas layout geometry
-        self.main_x = 10
-        self.main_y = 68
-        self.main_w = 1020
-        self.main_h = 788
+        self.main_x_default = 10
+        self.main_y_default = CONTENT_TOP
+        self.main_h_default = CANVAS_HEIGHT - CONTENT_TOP - FOOTER_HEIGHT
 
-        self.side_x = 1040
-        self.side_y = 68
-        self.side_w = 550
-        self.side_h = 788
+        self.main_x = self.main_x_default
+        self.main_y = self.main_y_default
+        self.main_w = CANVAS_WIDTH - 20
+        self.main_h = self.main_h_default
 
-        # Tab button geometry: 10 tabs across header
-        self.tab_w = 152
-        self.tab_h = 28
-        self.tab_y = 34
-        self.tab_spacing = 6
-        self.tab_start_x = 12
+        # Five balanced conceptual destinations across the available header width.
+        self.nav_button_w = (CANVAS_WIDTH - 2 * NAV_MARGIN - (len(NAV_ITEMS) - 1) * NAV_GAP) // len(NAV_ITEMS)
+        self.nav_rects = tuple(
+            (NAV_MARGIN + i * (self.nav_button_w + NAV_GAP), NAV_Y, self.nav_button_w, NAV_HEIGHT)
+            for i in range(len(NAV_ITEMS))
+        )
+        self.subnav_button_w = (self.nav_button_w - (len(ACOUSTIC_MODE_ITEMS) - 1) * SUBNAV_GAP) // len(ACOUSTIC_MODE_ITEMS)
 
         # Initialize SQLite database, repository, and experiment manager
         print("[App] Initializing SQLite Experiment Database & Repository...")
@@ -162,15 +177,7 @@ class ProfessorDemoApp:
         )
 
 
-        # Initialize persistent sidebar
-        self.sidebar = TelemetrySidebar(
-            x=self.side_x,
-            y=self.side_y,
-            w=self.side_w,
-            h=self.side_h,
-        )
-
-        # Initialize all 10 mode panels
+        # Initialize the eight active mode panels
         self.panel_multimodal = MultimodalPanel(x=self.main_x, y=self.main_y, w=self.main_w, h=self.main_h)
         self.panel_acoustic = AcousticPanel(x=self.main_x, y=self.main_y, w=self.main_w, h=self.main_h)
         self.panel_vision = VisionPanel(x=self.main_x, y=self.main_y, w=self.main_w, h=self.main_h)
@@ -199,9 +206,6 @@ class ProfessorDemoApp:
             h=self.main_h,
             repository=self.repo,
         )
-        self.panel_architecture = ArchitecturePanel(x=self.main_x, y=self.main_y, w=self.main_w, h=self.main_h)
-        self.panel_roadmap = RoadmapPanel(x=self.main_x, y=self.main_y, w=self.main_w, h=self.main_h)
-
         # FPS calculation
         self.last_time = time.perf_counter()
         self.fps = 0.0
@@ -212,10 +216,66 @@ class ProfessorDemoApp:
         self.display_pad_y = 0
 
     def set_notification(self, text: str) -> None:
-        """Display an ephemeral notification in the footer status bar."""
-        self.notification_msg = text
-        self.notification_time = time.time()
+        """Log an application notification without adding a persistent UI ticker."""
         print(f"[App Notification] {text}")
+
+    def _apply_profile_layout(self) -> None:
+        """Update layout geometry and resize panels according to active profile."""
+        if self.profile_mode == "DIAGNOSTIC":
+            self.main_x = 10
+            self.main_y = 38
+            self.main_w = CANVAS_WIDTH - 20  # 1580 px
+            self.main_h = CANVAS_HEIGHT - 38 - 10  # 852 px
+        else:
+            self.main_x = self.main_x_default
+            self.main_y = CONTENT_TOP_WITH_SUBNAV if self.current_mode in ACOUSTIC_MODES else CONTENT_TOP
+            self.main_w = CANVAS_WIDTH - 20
+            self.main_h = CANVAS_HEIGHT - self.main_y - FOOTER_HEIGHT
+
+        for panel in (
+            self.panel_multimodal,
+            self.panel_acoustic,
+            self.panel_vision,
+            self.panel_horizontal,
+            self.panel_vertical,
+            self.panel_sync,
+            self.panel_diagnostics,
+            self.panel_validation,
+        ):
+            if hasattr(panel, "set_layout"):
+                if panel is self.panel_multimodal or panel is self.panel_vision:
+                    panel.set_layout(
+                        self.main_x,
+                        self.main_y,
+                        self.main_w,
+                        self.main_h,
+                        preserve_aspect=True,
+                    )
+                else:
+                    panel.set_layout(self.main_x, self.main_y, self.main_w, self.main_h)
+
+    def _select_mode(self, mode: int) -> bool:
+        """Select one of the eight active modes and synchronize its layout."""
+        if mode not in MODE_LABELS or mode == self.current_mode:
+            return False
+
+        self.current_mode = mode
+        self.runner.set_diagnostics_enabled(self.profile_mode == "DIAGNOSTIC" or mode == 7)
+        self._apply_profile_layout()
+        self.set_notification(f"Switched to Mode {mode}: {MODE_LABELS[mode]}")
+        return True
+
+    def _navigation_group_index(self) -> int:
+        """Return the conceptual navigation destination for the active mode."""
+        if self.current_mode == 1:
+            return 0
+        if self.current_mode in ACOUSTIC_MODES:
+            return 1
+        if self.current_mode == 3:
+            return 2
+        if self.current_mode == 6:
+            return 3
+        return 4
 
     def toggle_profile_mode(self) -> str:
         """Toggle between PRODUCTION and DIAGNOSTIC execution profiles."""
@@ -226,6 +286,7 @@ class ProfessorDemoApp:
             self.profile_mode = "PRODUCTION"
             # In production, diagnostics run only if currently in Mode 7
             self.runner.set_diagnostics_enabled(self.current_mode == 7)
+        self._apply_profile_layout()
         self.set_notification(f"Profile switched to [{self.profile_mode} MODE]")
         return self.profile_mode
 
@@ -242,30 +303,41 @@ class ProfessorDemoApp:
             if x < 0 or x >= CANVAS_WIDTH or y < 0 or y >= CANVAS_HEIGHT:
                 return  # Clicked inside letterbox padding
 
-        # Check Profile Toggle button in header (x in [1040, 1205], y in [4, 30])
-        if 1040 <= x <= 1205 and 4 <= y <= 30:
+        # Header profile toggle uses the same geometry as its rendered rounded control.
+        px, py, pw, ph = PROFILE_BUTTON
+        if rounded_rect_contains(x, y, px, py, pw, ph, RADIUS_BUTTON):
             self.toggle_profile_mode()
             return
 
-        # Check navigation tabs (Header row 2: y in [34, 62])
-        if self.tab_y <= y <= self.tab_y + self.tab_h:
-            for i in range(10):
-                tx = self.tab_start_x + i * (self.tab_w + self.tab_spacing)
-                if tx <= x <= tx + self.tab_w:
-                    new_mode = 10 if i == 9 else i + 1
-                    if new_mode != self.current_mode:
-                        self.current_mode = new_mode
-                        # Update runner diagnostics if in Mode 7 or DIAGNOSTIC profile
-                        if self.profile_mode == "DIAGNOSTIC" or self.current_mode == 7:
-                            self.runner.set_diagnostics_enabled(True)
-                        else:
-                            self.runner.set_diagnostics_enabled(False)
-                        self.set_notification(f"Switched to Mode {self.current_mode}: {TAB_LABELS[i]}")
+        # Header YOLO toggle is available in DIAGNOSTIC mode only.
+        yx, yy, yw, yh = YOLO_BUTTON
+        if self.profile_mode == "DIAGNOSTIC" and rounded_rect_contains(x, y, yx, yy, yw, yh, RADIUS_BUTTON):
+            new_state = self.runner.toggle_yolo()
+            status_str = "ENABLED" if new_state else "DISABLED (Inference Skipped)"
+            self.set_notification(f"YOLO Mode switched: {status_str}")
+            return
+
+        if self.profile_mode == "PRODUCTION":
+            for rect, (_, default_mode) in zip(self.nav_rects, NAV_ITEMS):
+                nx, ny, nw, nh = rect
+                if rounded_rect_contains(x, y, nx, ny, nw, nh, RADIUS_BUTTON):
+                    self._select_mode(default_mode)
                     return
+
+            if self.current_mode in ACOUSTIC_MODES:
+                acoustic_x = self.nav_rects[1][0]
+                total_subnav_w = len(ACOUSTIC_MODE_ITEMS) * self.subnav_button_w + (len(ACOUSTIC_MODE_ITEMS) - 1) * SUBNAV_GAP
+                subnav_x = acoustic_x + (self.nav_button_w - total_subnav_w) // 2
+                if SUBNAV_Y <= y <= SUBNAV_Y + SUBNAV_HEIGHT:
+                    for i, (mode, _) in enumerate(ACOUSTIC_MODE_ITEMS):
+                        sx = subnav_x + i * (self.subnav_button_w + SUBNAV_GAP)
+                        if rounded_rect_contains(x, y, sx, SUBNAV_Y, self.subnav_button_w, SUBNAV_HEIGHT, SUBNAV_RADIUS):
+                            self._select_mode(mode)
+                            return
 
         # Handle Mode 1: Multimodal ground truth click & YOLO toggle
         if self.current_mode == 1:
-            if self.panel_multimodal.handle_yolo_click(x, y):
+            if self.profile_mode == "PRODUCTION" and self.panel_multimodal.handle_yolo_click(x, y):
                 new_state = self.runner.toggle_yolo()
                 status_str = "ENABLED" if new_state else "DISABLED (Inference Skipped)"
                 self.set_notification(f"YOLO Mode switched: {status_str}")
@@ -299,104 +371,93 @@ class ProfessorDemoApp:
                 return
 
     def _render_header(self, canvas: np.ndarray, telemetry: dict) -> None:
-        """Render application title bar, status indicators, and mode selection tabs."""
-        # Top banner background
-        cv2.rectangle(canvas, (0, 0), (CANVAS_WIDTH, HEADER_HEIGHT), BG_PANEL, -1)
-        cv2.line(canvas, (0, HEADER_HEIGHT), (CANVAS_WIDTH, HEADER_HEIGHT), BORDER, 1)
-
-        # Title & subtitle (large readable title with thickness 2, simplex font)
-        cv2.putText(
+        """Render the toolbar, conceptual destinations, and contextual mode navigation."""
+        header_h = self.main_y if self.profile_mode == "PRODUCTION" else 34
+        cv2.rectangle(canvas, (0, 0), (CANVAS_WIDTH, header_h), BG_CANVAS, -1)
+        draw_app_title(
             canvas,
             "REAL-TIME MULTIMODAL ACOUSTIC CAMERA",
-            (14, 25),
-            FONT_TITLE,
-            SCALE_TITLE,
-            TEXT_PRIMARY,
-            2,
-            AA,
-        )
-        cv2.putText(
-            canvas,
-            "|  Faculty Presentation & Validation Suite",
-            (575, 24),
-            FONT_HEADER,
-            SCALE_SUBTITLE,
-            TEXT_ACCENT,
-            1,
-            AA,
+            18,
+            26,
         )
 
-        # Profile Toggle Button (PRODUCTION / DIAGNOSTIC) [P]
         diag_active = (self.profile_mode == "DIAGNOSTIC")
-        p_bg = (38, 28, 65) if diag_active else (25, 45, 30)
-        p_border = ACCENT_AMBER if diag_active else ACCENT_GREEN
-        p_text_col = ACCENT_AMBER if diag_active else ACCENT_GREEN
-        p_text = "[P] DIAGNOSTIC" if diag_active else "[P] PRODUCTION"
-        cv2.rectangle(canvas, (1040, 4), (1205, 28), p_bg, -1)
-        cv2.rectangle(canvas, (1040, 4), (1205, 28), p_border, 1)
-        cv2.putText(canvas, p_text, (1050, 20), FONT_HEADER, 0.44, p_text_col, 1, AA)
+        px, py, pw, ph = PROFILE_BUTTON
+        draw_button(
+            canvas,
+            "[P] DIAGNOSTIC" if diag_active else "[P] PRODUCTION",
+            px,
+            py,
+            pw,
+            ph,
+            active=diag_active,
+            border_color=ACCENT_AMBER if diag_active else ACCENT_GREEN,
+            scale=0.42,
+        )
 
-        # Hardware & loop status indicators (top-right)
-        status_text = "SIMULATION" if self.simulate else ("ONLINE" if telemetry.get("camera_connected") else "HARDWARE PENDING")
-        draw_badge(canvas, 1220, 5, status_text, status_ok=(not self.simulate and telemetry.get("camera_connected", False)))
+        if self.profile_mode == "DIAGNOSTIC":
+            yolo_on = telemetry.get("yolo_enabled", True)
+            yx, yy, yw, yh = YOLO_BUTTON
+            draw_button(
+                canvas,
+                "[Y] YOLO ON" if yolo_on else "[Y] YOLO OFF",
+                yx,
+                yy,
+                yw,
+                yh,
+                active=yolo_on,
+                border_color=ACCENT_GREEN if yolo_on else ACCENT_RED,
+                scale=0.42,
+            )
 
-        fps_text = f"{self.fps:4.1f} FPS"
-        cv2.putText(canvas, fps_text, (1395, 22), FONT_HEADER, 0.48, TEXT_SECONDARY, 1, AA)
-
+        fps_x, fps_y = FPS_CHIP
+        draw_status_chip(canvas, fps_x, fps_y, f"{self.fps:4.1f} FPS")
         rec_status = "[REC]" if self.runner.logger.recording_session else "IDLE"
-        rec_color = ACCENT_RED if self.runner.logger.recording_session else TEXT_MUTED
-        cv2.putText(canvas, rec_status, (1495, 22), FONT_HEADER, 0.48, rec_color, 1, AA)
+        rec_tone = "error" if self.runner.logger.recording_session else "neutral"
+        rec_x, rec_y = RECORDING_CHIP
+        draw_status_chip(canvas, rec_x, rec_y, rec_status, tone=rec_tone)
 
-        # 10 Navigation Tab Buttons with centered, clean typography
-        for i, label in enumerate(TAB_LABELS):
-            tx = self.tab_start_x + i * (self.tab_w + self.tab_spacing)
-            tab_mode = 10 if i == 9 else i + 1
-            is_active = (tab_mode == self.current_mode)
+        if self.profile_mode == "PRODUCTION":
+            active_group = self._navigation_group_index()
+            for i, (label, _) in enumerate(NAV_ITEMS):
+                nx, ny, nw, nh = self.nav_rects[i]
+                draw_button(canvas, label, nx, ny, nw, nh, active=(i == active_group), scale=0.48)
 
-            # Tab button appearance
-            bg_col = BG_CARD if is_active else BG_PANEL
-            border_col = ACCENT_CYAN if is_active else BORDER
-            text_col = TEXT_PRIMARY if is_active else TEXT_SECONDARY
+            if self.current_mode in ACOUSTIC_MODES:
+                acoustic_x = self.nav_rects[1][0]
+                total_subnav_w = len(ACOUSTIC_MODE_ITEMS) * self.subnav_button_w + (len(ACOUSTIC_MODE_ITEMS) - 1) * SUBNAV_GAP
+                subnav_x = acoustic_x + (self.nav_button_w - total_subnav_w) // 2
+                for i, (mode, label) in enumerate(ACOUSTIC_MODE_ITEMS):
+                    sx = subnav_x + i * (self.subnav_button_w + SUBNAV_GAP)
+                    draw_button(
+                        canvas,
+                        label,
+                        sx,
+                        SUBNAV_Y,
+                        self.subnav_button_w,
+                        SUBNAV_HEIGHT,
+                        active=(self.current_mode == mode),
+                        radius=SUBNAV_RADIUS,
+                        scale=0.38,
+                    )
 
-            cv2.rectangle(canvas, (tx, self.tab_y), (tx + self.tab_w, self.tab_y + self.tab_h), bg_col, -1)
-            cv2.rectangle(canvas, (tx, self.tab_y), (tx + self.tab_w, self.tab_y + self.tab_h), border_col, 2 if is_active else 1)
-
-            if is_active:
-                cv2.rectangle(canvas, (tx, self.tab_y + self.tab_h - 3), (tx + self.tab_w, self.tab_y + self.tab_h), ACCENT_CYAN, -1)
-
-            (tw, th), _ = cv2.getTextSize(label, FONT_BODY, SCALE_TAB, 1)
-            tx_cen = tx + (self.tab_w - tw) // 2
-            ty_cen = self.tab_y + (self.tab_h + th) // 2 - 1
-            cv2.putText(canvas, label, (tx_cen, ty_cen), FONT_BODY, SCALE_TAB, text_col, 1, AA)
+        draw_divider(canvas, 0, header_h - 1, CANVAS_WIDTH - 1, header_h - 1)
 
     def _render_footer(self, canvas: np.ndarray) -> None:
-        """Render keyboard shortcuts and live notification ticker."""
+        """Render keyboard shortcuts in the footer."""
         fy = CANVAS_HEIGHT - FOOTER_HEIGHT
         cv2.rectangle(canvas, (0, fy), (CANVAS_WIDTH, CANVAS_HEIGHT), BG_PANEL, -1)
-        cv2.line(canvas, (0, fy), (CANVAS_WIDTH, fy), BORDER, 1)
+        draw_divider(canvas, 0, fy, CANVAS_WIDTH - 1, fy)
 
         # Hotkeys guide (left)
-        guide = "[1-0]: Modes | [P]: Profile | [Y]: YOLO ON/OFF | [S]: Snap | [E]: Export | [R]: Rec | [C]: Clear GT | [Q]: Quit"
-        cv2.putText(canvas, guide, (16, fy + 27), FONT_BODY, 0.44, TEXT_SECONDARY, 1, AA)
-
-        # Dynamic notification message (right)
-        if time.time() - self.notification_time < 8.0:
-            cv2.putText(
-                canvas,
-                self.notification_msg,
-                (730, fy + 27),
-                FONT_BODY,
-                0.46,
-                ACCENT_CYAN,
-                1,
-                AA,
-            )
+        guide = "[1-8] Modes   [P] Profile   [Y] YOLO   [S] Snapshot   [E] Export   [R] Record   [C] Clear Target   [Q] Quit"
+        cv2.putText(canvas, guide, (SPACE_MD, fy + 27), FONT_BODY, 0.40, TEXT_SECONDARY, 1, AA)
 
     def compose_frame(self, telemetry: dict) -> np.ndarray:
         """Compose the complete 1600x900 GUI canvas for the current active mode."""
         canvas = np.full((CANVAS_HEIGHT, CANVAS_WIDTH, 3), BG_CANVAS, dtype=np.uint8)
 
-        # Ensure profile_mode is populated in telemetry for sidebar / badges
+        # Ensure profile_mode is populated in telemetry for panel-level status
         telemetry["profile_mode"] = self.profile_mode
 
         # 1. Render top header
@@ -419,26 +480,14 @@ class ProfessorDemoApp:
             self.panel_diagnostics.render(canvas, telemetry)
         elif self.current_mode == 8:
             self.panel_validation.render(canvas, telemetry)
-        elif self.current_mode == 9:
-            self.panel_architecture.render(canvas, telemetry)
-        elif self.current_mode == 10:
-            self.panel_roadmap.render(canvas, telemetry)
-
-        # 3. Render persistent telemetry sidebar on the right
-        self.sidebar.render(
-            canvas,
-            telemetry,
-            recording_session=self.runner.logger.recording_session,
-        )
-
-        # 4. Render footer
-        self._render_footer(canvas)
+        if self.profile_mode == "PRODUCTION":
+            self._render_footer(canvas)
 
         return canvas
 
     def run(self) -> None:
         """Main application display loop."""
-        window_name = "Real-Time Multimodal Acoustic Camera | Faculty Presentation Demo"
+        window_name = "Real-Time Multimodal Acoustic Camera"
 
         if not self.headless_frames:
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -466,7 +515,7 @@ class ProfessorDemoApp:
         print("  REAL-TIME MULTIMODAL ACOUSTIC CAMERA: PROFESSOR DEMO")
         print("========================================================")
         print("Controls:")
-        print("  [1-0]       : Switch between presentation modes 1 to 10")
+        print("  [1-8]       : Switch between presentation modes 1 to 8")
         print("  [S]         : Capture high-resolution snapshot & JSON telemetry")
         print("  [E]         : Export experiment database to CSV & JSON")
         print("  [R]         : Toggle continuous session recording to scratch/")
@@ -555,20 +604,8 @@ class ProfessorDemoApp:
                         break
                     elif key in [ord('p'), ord('P')]:
                         self.toggle_profile_mode()
-                    elif key in [ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6'), ord('7'), ord('8'), ord('9')]:
-                        self.current_mode = key - ord('0')
-                        if self.profile_mode == "DIAGNOSTIC" or self.current_mode == 7:
-                            self.runner.set_diagnostics_enabled(True)
-                        else:
-                            self.runner.set_diagnostics_enabled(False)
-                        self.set_notification(f"Switched to Mode {self.current_mode}: {TAB_LABELS[self.current_mode - 1]}")
-                    elif key == ord('0'):
-                        self.current_mode = 10
-                        if self.profile_mode == "DIAGNOSTIC":
-                            self.runner.set_diagnostics_enabled(True)
-                        else:
-                            self.runner.set_diagnostics_enabled(False)
-                        self.set_notification("Switched to Mode 10: [0] ROADMAP")
+                    elif key in [ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6'), ord('7'), ord('8')]:
+                        self._select_mode(key - ord('0'))
                     elif key in [ord('s'), ord('S')]:
                         try:
                             saved_path = self.runner.save_snapshot(canvas.copy())
@@ -584,7 +621,7 @@ class ProfessorDemoApp:
                         except Exception as e:
                             print(f"[App] Export error: {e}")
                             self.set_notification(f"Export error: {e}")
-                    elif key in [ord('r'), ord('R')]:
+                    elif key in [ord('r'), ord('R')] and self.profile_mode == "PRODUCTION":
                         try:
                             is_rec, rec_file = self.runner.toggle_session_recording()
                             if is_rec:
