@@ -2,15 +2,15 @@
 vision.camera
 =============
 
-ESP32-CAM video acquisition interface for the
+Network camera video acquisition interface for the
 Multimodal Acoustic Camera project.
 
-This module provides a low-latency abstraction over the
-ESP32-CAM MJPEG HTTP stream.
+This module provides a low-latency abstraction over MJPEG
+HTTP camera streams.
 
 Responsibilities
 ----------------
-- Connect to the ESP32-CAM MJPEG stream
+- Connect to the configured camera MJPEG stream
 - Continuously read the camera stream in a background thread
 - Keep ONLY the newest frame
 - Discard stale buffered frames
@@ -26,7 +26,7 @@ cv2.VideoCapture.read().
 The public read() method returns the latest already-decoded
 frame instead of reading directly from the network stream.
 
-This prevents old ESP32-CAM frames from accumulating and
+This prevents old camera frames from accumulating and
 causing multi-second visual latency.
 
 This module intentionally does NOT perform:
@@ -49,11 +49,14 @@ from typing import Optional
 import cv2
 
 from config.settings import (
+    MOBILE_CAMERA_URL,
     STREAM_URL,
     FRAME_WIDTH,
     FRAME_HEIGHT,
     CAMERA_MODEL,
 )
+
+FRAME_STALE_TIMEOUT_SEC = 2.0
 
 
 # ============================================================
@@ -97,7 +100,7 @@ class CameraFrame:
 
 class CameraAcquisition:
     """
-    Low-latency ESP32-CAM MJPEG stream acquisition.
+    Low-latency MJPEG camera stream acquisition.
 
     Architecture
     ------------
@@ -146,13 +149,20 @@ class CameraAcquisition:
         stream_url: str = STREAM_URL,
         expected_width: int = FRAME_WIDTH,
         expected_height: int = FRAME_HEIGHT,
-        camera_model: str = CAMERA_MODEL,
+        camera_model: Optional[str] = None,
     ) -> None:
 
         self.stream_url = stream_url
         self.expected_width = expected_width
         self.expected_height = expected_height
-        self.camera_model = camera_model
+        if camera_model is not None:
+            self.camera_model = camera_model
+        elif stream_url == MOBILE_CAMERA_URL:
+            self.camera_model = "Mobile IP Webcam"
+        elif stream_url == STREAM_URL:
+            self.camera_model = CAMERA_MODEL
+        else:
+            self.camera_model = "Network Camera"
 
         # ----------------------------------------------------
         # OpenCV capture
@@ -198,14 +208,14 @@ class CameraAcquisition:
 
     def start(self) -> None:
         """
-        Connect to the ESP32-CAM MJPEG stream and start the
+        Connect to the configured camera stream and start the
         background frame reader.
         """
 
         if self.started:
             return
 
-        print("[Camera] Connecting to ESP32-CAM...")
+        print("[Camera] Connecting to camera stream...")
         print(f"[Camera] Model : {self.camera_model}")
         print(f"[Camera] URL   : {self.stream_url}")
 
@@ -216,7 +226,7 @@ class CameraAcquisition:
             capture.release()
 
             raise RuntimeError(
-                f"Unable to connect to ESP32-CAM stream: "
+                f"Unable to connect to camera stream: "
                 f"{self.stream_url}"
             )
 
@@ -433,12 +443,21 @@ class CameraAcquisition:
 
             camera_frame = self._latest_frame
 
+        if self._reader_error is not None:
+            error = self._reader_error
+            self.stop()
+            raise RuntimeError(f"Camera stream reader failed: {error}") from error
+
         # ----------------------------------------------------
         # No frame received yet.
         # ----------------------------------------------------
 
         if camera_frame is None:
             return None
+
+        if time.perf_counter() - camera_frame.timestamp > FRAME_STALE_TIMEOUT_SEC:
+            self.stop()
+            raise RuntimeError("Camera stream stopped delivering fresh frames.")
 
         # ----------------------------------------------------
         # Return the latest frame.

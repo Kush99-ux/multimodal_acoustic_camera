@@ -31,6 +31,9 @@ ESP32_IP = "172.27.8.165"
 # ESP32-CAM MJPEG stream endpoint.
 STREAM_URL = "http://10.243.98.165:81/stream"
 
+# Mobile phone camera stream served by the IP Webcam app.
+MOBILE_CAMERA_URL = "http://10.193.248.105:8080/video"
+
 # ------------------------------------------------------------
 # Camera stream resolution
 # ------------------------------------------------------------

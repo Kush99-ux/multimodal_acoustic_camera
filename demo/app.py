@@ -28,6 +28,7 @@ import argparse
 from datetime import datetime
 import os
 import sys
+import threading
 import time
 from typing import Any, List, Optional, Tuple
 import cv2
@@ -49,8 +50,9 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from config.settings import STREAM_URL
+from config.settings import MOBILE_CAMERA_URL, STREAM_URL
 from demo.core.runner import DemoPipelineRunner
+from vision.camera import CameraAcquisition
 from demo.data import ExperimentDatabase, ExperimentRepository, migrate_historical_records
 from demo.core.experiment_manager import ExperimentManager
 from demo.panels import (
@@ -106,6 +108,7 @@ SUBNAV_RADIUS = 8
 CONTENT_TOP = 68
 CONTENT_TOP_WITH_SUBNAV = 96
 PROFILE_BUTTON = (1010, 5, 160, 26)
+CAMERA_BUTTON = (760, 5, 240, 26)
 YOLO_BUTTON = (1182, 5, 142, 26)
 FPS_CHIP = (1340, 6)
 RECORDING_CHIP = (1445, 6)
@@ -175,6 +178,23 @@ class ProfessorDemoApp:
             log_dir=self.output_dir,
             audio_device=self.audio_device,
         )
+        self.selected_camera_url = self.runner.stream_url
+        self.camera_online = False
+        self.camera_switch_error: Optional[str] = None
+        self.camera_switching = False
+        self.camera_switch_target: Optional[str] = None
+        self._camera_request_lock = threading.Lock()
+        self._pending_camera_source: Optional[Tuple[str, str]] = None
+        self._pipeline_stop = threading.Event()
+        self._pipeline_thread: Optional[threading.Thread] = None
+        self._pipeline_snapshot_lock = threading.Lock()
+        self._pipeline_snapshot_id = 0
+        self._latest_telemetry = dict(self.runner.latest_telemetry)
+        self._latest_camera_frame: Optional[np.ndarray] = None
+        self._latest_overlaid_frame: Optional[np.ndarray] = None
+        self._latest_heatmap: Optional[np.ndarray] = None
+        self._last_key_code: Optional[int] = None
+        self._last_key_seen = 0.0
 
 
         # Initialize the eight active mode panels
@@ -218,6 +238,120 @@ class ProfessorDemoApp:
     def set_notification(self, text: str) -> None:
         """Log an application notification without adding a persistent UI ticker."""
         print(f"[App Notification] {text}")
+
+    def toggle_camera_source(self) -> bool:
+        """Request an asynchronous switch between the two live camera sources."""
+        if self.simulate:
+            self.set_notification("Camera source selection is unavailable in simulation mode.")
+            return False
+
+        with self._camera_request_lock:
+            if self.camera_switching:
+                return False
+            if self.selected_camera_url == MOBILE_CAMERA_URL:
+                source = ("ESP32-CAM", STREAM_URL)
+            else:
+                source = ("Mobile", MOBILE_CAMERA_URL)
+            self.camera_switching = True
+            self.camera_switch_target = source[0]
+            self.camera_switch_error = None
+            self._pending_camera_source = source
+
+        self.set_notification(f"Connecting to {source[0]} camera...")
+        return True
+
+    def _wait_for_camera_frame(self, camera: CameraAcquisition, timeout_sec: float = 4.0) -> bool:
+        """Wait for a decoded frame without blocking the UI thread."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline and not self._pipeline_stop.is_set():
+            if camera.read() is not None:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def _process_camera_source_request(self, source_name: str, source_url: str) -> None:
+        """Open and verify a replacement stream on the pipeline worker."""
+        replacement: Optional[CameraAcquisition] = None
+        try:
+            replacement = CameraAcquisition(stream_url=source_url)
+            replacement.start()
+            if not self._wait_for_camera_frame(replacement):
+                raise RuntimeError("Stream opened, but no decoded video frame arrived within 4 seconds.")
+        except Exception as exc:
+            if replacement is not None:
+                replacement.stop()
+            with self._camera_request_lock:
+                self.camera_switching = False
+                self.camera_switch_target = None
+                self.camera_switch_error = source_name
+            self.set_notification(f"Could not switch to {source_name}: {exc}")
+            return
+
+        previous_camera = self.runner.camera
+        self.runner.camera = replacement
+        self.runner.stream_url = source_url
+        self.runner.camera_connected = True
+        self.stream_url = source_url
+        self.selected_camera_url = source_url
+        with self._camera_request_lock:
+            self.camera_switching = False
+            self.camera_switch_target = None
+            self.camera_switch_error = None
+
+        if previous_camera is not None:
+            try:
+                previous_camera.stop()
+            except Exception as exc:
+                print(f"[App] Previous camera cleanup warning: {exc}")
+
+        self.set_notification(f"Camera source switched to {source_name}.")
+
+    def _pipeline_loop(self) -> None:
+        """Run acquisition and inference independently of GUI event polling."""
+        initial_camera = self.runner.camera
+        if initial_camera is not None and self.runner.camera_connected:
+            initial_source_name = (
+                "Mobile" if self.runner.stream_url == MOBILE_CAMERA_URL
+                else "ESP32-CAM" if self.runner.stream_url == STREAM_URL
+                else "Camera"
+            )
+            try:
+                if not self._wait_for_camera_frame(initial_camera):
+                    initial_camera.stop()
+                    self.runner.camera = None
+                    self.runner.camera_connected = False
+                    self.camera_switch_error = initial_source_name
+                    self.set_notification(f"{initial_source_name} opened without delivering a video frame; camera marked offline.")
+            except Exception as exc:
+                initial_camera.stop()
+                self.runner.camera = None
+                self.runner.camera_connected = False
+                self.camera_switch_error = initial_source_name
+                self.set_notification(f"{initial_source_name} frame acquisition failed: {exc}")
+
+        while not self._pipeline_stop.is_set():
+            with self._camera_request_lock:
+                request = self._pending_camera_source
+                self._pending_camera_source = None
+            if request is not None:
+                self._process_camera_source_request(*request)
+
+            if self._pipeline_stop.is_set():
+                break
+            try:
+                telemetry = self.runner.step()
+                has_decoded_frame = int(telemetry.get("camera_frame_id", 0) or 0) > 0
+                telemetry["camera_connected"] = bool(telemetry.get("camera_connected", False) and has_decoded_frame)
+                with self._pipeline_snapshot_lock:
+                    self._latest_telemetry = dict(telemetry)
+                    self._latest_camera_frame = self.runner.latest_camera_frame
+                    self._latest_overlaid_frame = self.runner.latest_overlaid_frame
+                    self._latest_heatmap = self.runner.latest_heatmap
+                    self.camera_online = telemetry["camera_connected"]
+                    self._pipeline_snapshot_id += 1
+            except Exception as exc:
+                print(f"[App] Pipeline worker error: {exc}")
+                time.sleep(0.05)
 
     def _apply_profile_layout(self) -> None:
         """Update layout geometry and resize panels according to active profile."""
@@ -309,6 +443,11 @@ class ProfessorDemoApp:
             self.toggle_profile_mode()
             return
 
+        cx, cy, cw, ch = CAMERA_BUTTON
+        if rounded_rect_contains(x, y, cx, cy, cw, ch, RADIUS_BUTTON):
+            self.toggle_camera_source()
+            return
+
         # Header YOLO toggle is available in DIAGNOSTIC mode only.
         yx, yy, yw, yh = YOLO_BUTTON
         if self.profile_mode == "DIAGNOSTIC" and rounded_rect_contains(x, y, yx, yy, yw, yh, RADIUS_BUTTON):
@@ -382,6 +521,36 @@ class ProfessorDemoApp:
         )
 
         diag_active = (self.profile_mode == "DIAGNOSTIC")
+        camera_url = self.selected_camera_url
+        camera_label = "MOBILE" if camera_url == MOBILE_CAMERA_URL else "ESP32-CAM"
+        if camera_url not in (STREAM_URL, MOBILE_CAMERA_URL):
+            camera_label = "CUSTOM"
+        cx, cy, cw, ch = CAMERA_BUTTON
+        camera_online = self.camera_online
+        if self.camera_switch_error:
+            active_state = "ON" if camera_online else "OFFLINE"
+            camera_text = f"[V] {self.camera_switch_error} FAIL | {camera_label} {active_state}"
+        elif self.camera_switching:
+            camera_text = f"[V] CONNECTING {self.camera_switch_target or 'CAMERA'}"
+        elif not camera_online and not self.simulate:
+            camera_text = f"[V] CAMERA: {camera_label} OFFLINE"
+        else:
+            camera_text = f"[V] CAMERA: {camera_label}"
+        draw_button(
+            canvas,
+            camera_text,
+            cx,
+            cy,
+            cw,
+            ch,
+            active=(camera_online and camera_label == "MOBILE"),
+            border_color=(
+                ACCENT_RED if self.camera_switch_error or (not camera_online and not self.simulate)
+                else ACCENT_AMBER if camera_label == "MOBILE"
+                else ACCENT_GREEN
+            ),
+            scale=0.34 if self.camera_switch_error else 0.42,
+        )
         px, py, pw, ph = PROFILE_BUTTON
         draw_button(
             canvas,
@@ -450,7 +619,7 @@ class ProfessorDemoApp:
         draw_divider(canvas, 0, fy, CANVAS_WIDTH - 1, fy)
 
         # Hotkeys guide (left)
-        guide = "[1-8] Modes   [P] Profile   [Y] YOLO   [S] Snapshot   [E] Export   [R] Record   [C] Clear Target   [Q] Quit"
+        guide = "[1-8] Modes   [P] Profile   [V] Camera   [Y] YOLO   [S] Snapshot   [E] Export   [R] Record   [C] Clear Target   [Q] Quit"
         cv2.putText(canvas, guide, (SPACE_MD, fy + 27), FONT_BODY, 0.40, TEXT_SECONDARY, 1, AA)
 
     def compose_frame(self, telemetry: dict) -> np.ndarray:
@@ -465,11 +634,11 @@ class ProfessorDemoApp:
 
         # 2. Render active mode panel
         if self.current_mode == 1:
-            self.panel_multimodal.render(canvas, self.runner.latest_overlaid_frame, telemetry)
+            self.panel_multimodal.render(canvas, self._latest_overlaid_frame, telemetry)
         elif self.current_mode == 2:
-            self.panel_acoustic.render(canvas, self.runner.latest_heatmap, telemetry)
+            self.panel_acoustic.render(canvas, self._latest_heatmap, telemetry)
         elif self.current_mode == 3:
-            self.panel_vision.render(canvas, self.runner.latest_camera_frame, telemetry)
+            self.panel_vision.render(canvas, self._latest_camera_frame, telemetry)
         elif self.current_mode == 4:
             self.panel_horizontal.render(canvas, telemetry)
         elif self.current_mode == 5:
@@ -516,6 +685,8 @@ class ProfessorDemoApp:
         print("========================================================")
         print("Controls:")
         print("  [1-8]       : Switch between presentation modes 1 to 8")
+        print("  [V]         : Switch between ESP32-CAM and mobile camera sources")
+        print("  Camera connection and YOLO processing run independently of GUI event polling")
         print("  [S]         : Capture high-resolution snapshot & JSON telemetry")
         print("  [E]         : Export experiment database to CSV & JSON")
         print("  [R]         : Toggle continuous session recording to scratch/")
@@ -523,37 +694,49 @@ class ProfessorDemoApp:
         print("  [Q] / [ESC] : Clean shutdown and exit")
         print("========================================================\n")
 
+        self._pipeline_stop.clear()
+        self._pipeline_thread = threading.Thread(
+            target=self._pipeline_loop,
+            name="DemoPipelineWorker",
+            daemon=True,
+        )
+        self._pipeline_thread.start()
+        last_processed_snapshot = -1
+
         try:
             while True:
                 t0 = time.perf_counter()
 
-                # 1. Execute hardware acquisition & inference pipeline step
-                telemetry = self.runner.step()
+                # Use the newest completed pipeline snapshot; inference never blocks this UI loop.
+                with self._pipeline_snapshot_lock:
+                    telemetry = dict(self._latest_telemetry)
+                    raw_img = self._latest_camera_frame
+                    ovl_img = self._latest_overlaid_frame
+                    hmap = self._latest_heatmap
+                    snapshot_id = self._pipeline_snapshot_id
 
-                # 2. Accumulate automated test frames if active
-                raw_img = self.runner.latest_camera_frame
-                ovl_img = self.runner.latest_overlaid_frame
-                hmap = self.runner.latest_heatmap
-
-                h_res = self.panel_horizontal.update_frame(
-                    telemetry, raw_image=raw_img, overlaid_image=ovl_img, heatmap=hmap
-                )
-                if h_res:
-                    h_err = h_res.get("pixel_error") or 0.0
-                    self.set_notification(
-                        f"Trial {h_res.get('run_id')} completed: {h_res.get('outcome_status')} "
-                        f"(Err {h_err:.1f}px)"
+                # Consume each completed pipeline frame once for active test capture.
+                if snapshot_id != last_processed_snapshot:
+                    last_processed_snapshot = snapshot_id
+                    h_res = self.panel_horizontal.update_frame(
+                        telemetry, raw_image=raw_img, overlaid_image=ovl_img, heatmap=hmap
                     )
+                    if h_res:
+                        h_err = h_res.get("pixel_error") or 0.0
+                        self.set_notification(
+                            f"Trial {h_res.get('run_id')} completed: {h_res.get('outcome_status')} "
+                            f"(Err {h_err:.1f}px)"
+                        )
 
-                v_res = self.panel_vertical.update_frame(
-                    telemetry, raw_image=raw_img, overlaid_image=ovl_img, heatmap=hmap
-                )
-                if v_res:
-                    v_err = v_res.get("pixel_error") or 0.0
-                    self.set_notification(
-                        f"Trial {v_res.get('run_id')} completed: {v_res.get('outcome_status')} "
-                        f"(Err {v_err:.1f}px)"
+                    v_res = self.panel_vertical.update_frame(
+                        telemetry, raw_image=raw_img, overlaid_image=ovl_img, heatmap=hmap
                     )
+                    if v_res:
+                        v_err = v_res.get("pixel_error") or 0.0
+                        self.set_notification(
+                            f"Trial {v_res.get('run_id')} completed: {v_res.get('outcome_status')} "
+                            f"(Err {v_err:.1f}px)"
+                        )
 
                 # 3. Compose full GUI frame
                 canvas = self.compose_frame(telemetry)
@@ -598,12 +781,24 @@ class ProfessorDemoApp:
                         cv2.imshow(window_name, canvas)
 
                     key = cv2.waitKey(1) & 0xFF
+                    key_now = time.monotonic()
+                    if key == 0xFF:
+                        if self._last_key_code is not None and key_now - self._last_key_seen >= 0.18:
+                            self._last_key_code = None
+                    elif key != self._last_key_code:
+                        self._last_key_code = key
+                        self._last_key_seen = key_now
+                    else:
+                        self._last_key_seen = key_now
+                        key = 0xFF  # Ignore OS key-repeat until the key is released.
 
                     if key in [ord('q'), ord('Q'), 27]:  # 27 = ESC
                         print("[App] Quit key pressed. Exiting...")
                         break
                     elif key in [ord('p'), ord('P')]:
                         self.toggle_profile_mode()
+                    elif key in [ord('v'), ord('V')]:
+                        self.toggle_camera_source()
                     elif key in [ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6'), ord('7'), ord('8')]:
                         self._select_mode(key - ord('0'))
                     elif key in [ord('s'), ord('S')]:
@@ -643,6 +838,9 @@ class ProfessorDemoApp:
             print("\n[App] Interrupted by user.")
         finally:
             print("[App] Shutting down background workers and releasing devices...")
+            self._pipeline_stop.set()
+            if self._pipeline_thread is not None and self._pipeline_thread.is_alive():
+                self._pipeline_thread.join(timeout=5.0)
             try:
                 self.experiment_manager.shutdown(timeout=5.0)
             except Exception as e:
